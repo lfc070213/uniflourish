@@ -40,27 +40,28 @@ cd you-are-my-eyes
 
 # 安装前端依赖
 npm install
-3. 配置 API Key
-在项目根目录创建 .env 文件（或在软件启动后的“设置中心”直接填写，登录后可同步）：
-code
-Env
-VITE_GEMINI_API_KEY=你的Gemini_Key
-VITE_DEEPSEEK_API_KEY=你的DeepSeek_Key
-4. 部署后端 (Ubuntu 服务器)
-确保服务器安装了 Node.js 和 MongoDB。
-进入 you-are-my-eyes-server 目录执行 npm install。
-运行 node index.js 启动记忆中心。
-注意：若在校外访问北大内网服务器，需挂载 AnyConnect VPN。
+#3. 配置 API Key(现版本不用管，可在应用中设置)
+#在项目根目录创建 .env 文件（或在软件启动后的“设置中心”直接填写，登录后可同步）：
+#code
+#Env
+#VITE_GEMINI_API_KEY=你的Gemini_Key
+#VITE_DEEPSEEK_API_KEY=你的DeepSeek_Key
+#4. 部署后端 (Ubuntu 服务器)（仅作者使用）
+#确保服务器安装了 Node.js 和 MongoDB。
+#进入 you-are-my-eyes-server 目录执行 npm install。
+#运行 node index.js 启动记忆中心。
+#注意：若在校外访问北大内网服务器，需挂载 AnyConnect VPN。
 🚀 启动与使用
 开发者模式
 code
 Bash
-npm run tauri dev
-打包为正式软件
-code
-Bash
-npm run tauri build
+     npm run tauri dev
+#打包为正式软件
+#code
+#Bash
+n#pm run tauri build
 📅 版本记录
+v1.4.1: 更新了readme文件
 v1.4.0: 实现 API Key 云同步，修复 Mac 登出弹窗失效，彻底对齐 UI。
 v1.3.0: 引入图片压缩算法，解决大图崩溃问题。
 v1.2.0: 上线长期记忆提炼与多会话管理。
@@ -70,6 +71,11 @@ MIT License
 code
 Code
 ---
+下面的仅我个人学习使用，不必理会
+
+
+
+
 
 ### 第二步：上传到 GitHub 并打上正式版标签
 
