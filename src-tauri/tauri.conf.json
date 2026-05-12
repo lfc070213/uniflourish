@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "you-are-my-eyes",
+  "productName": "Uniflourish",
   "version": "0.1.0",
-  "identifier": "com.you-are-my-eyes.app",
+  "identifier": "com.uniflourish.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "you-are-my-eyes",
+        "title": "Uniflourish",
         "width": 800,
         "height": 600
       }

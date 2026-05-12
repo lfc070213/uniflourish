@@ -1,4 +1,4 @@
-// 版本号: v1.51 (修复 TS 报错版)
+// 项目名: Uniflourish | 版本号: v1.5.3
 import "./App.css";
 import "katex/dist/katex.min.css";
 import { useState, useRef, useEffect } from "react";
@@ -15,6 +15,8 @@ import rehypeKatex from "rehype-katex";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js`;
 
+const VERSION = "v1.5.3";
+
 const MODELS =[
   { id: "gemini-3.1-flash-lite", name: "gemini-3.1-flash-lite", provider: "google" },
   { id: "gemini-3-flash-preview", name: "gemini-3-flash-preview", provider: "google" },
@@ -23,8 +25,10 @@ const MODELS =[
   { id: "deepseek-v4-pro", name: "deepseek-v4-pro", provider: "deepseek" },
 ];
 
-const STORAGE_KEY = "you_are_my_eyes_v1.5.1_stable";
-const SERVER_URL = "https://79866b64.r8.cpolar.top";
+const STORAGE_KEY = "uniflourish_v1.5.3_stable";
+
+// ✅ 已更新为全新的 cpolar URL
+const SERVER_URL = "https://dc90b03.r8.cpolar.top";
 
 const standardizeContent = (text: string) => {
   if (!text) return "";
@@ -61,7 +65,7 @@ const smartCompress = (file: File): Promise<{ display: string, api: string }> =>
 };
 
 const initDB = () => new Promise<IDBDatabase>((resolve, reject) => {
-  const req = indexedDB.open("EyesInfinityDB", 1);
+  const req = indexedDB.open("UniflourishDB", 1);
   req.onupgradeneeded = (e: any) => {
     const db = e.target.result;
     if (!db.objectStoreNames.contains("store")) db.createObjectStore("store");
@@ -126,6 +130,36 @@ const CodeBlock = ({ node, inline, className, children, ...props }: any) => {
   );
 };
 
+const fetchTextLLM = async (provider: string, modelId: string, apiKey: string, prompt: string) => {
+  if (provider === "google") {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        safetySettings:[{ category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" }, { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" }, { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" }, { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }]
+      })
+    });
+    const d = await res.json(); if (d.error) throw new Error(d.error.message); return d.candidates[0].content.parts[0].text;
+  } else if (provider === "claude") {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST", headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerously-allow-browser": "true", "content-type": "application/json" },
+      body: JSON.stringify({ model: modelId, messages: [{ role: "user", content: prompt }], max_tokens: 1024 })
+    });
+    const d = await res.json(); if (d.error) throw new Error(d.error.message); return d.content[0].text;
+  } else {
+    let url = "https://api.openai.com/v1/chat/completions";
+    if (provider === 'deepseek') url = "https://api.deepseek.com/chat/completions";
+    else if (provider === 'doubao') url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
+    else if (provider === 'kimi') url = "https://api.moonshot.cn/v1/chat/completions";
+    
+    const res = await fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: modelId, messages: [{ role: "user", content: prompt }] })
+    });
+    const d = await res.json(); if (d.error) throw new Error(d.error.message); return d.choices[0].message.content;
+  }
+};
+
 interface Attachment { id: string; type: 'image' | 'pdf'; name: string; mimeType: string; displayUrl: string; apiBase64: string; preview: string; extractedText?: string; file: File; }
 interface Message { id: string; role: "user" | "assistant"; content: string; reasoning?: string; modelName?: string; isError?: boolean; previewImages?: string[]; }
 interface ChatSession { id: string; title: string; messages: Message[]; createdAt: number; }
@@ -135,20 +169,20 @@ export default function App() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
-  const [longTermMemory, setLongTermMemory] = useState(localStorage.getItem("eye_brain_memory") || "尚未记录。");
-  const [geminiKey, setGeminiKey] = useState(localStorage.getItem("eye_gemini_key") || "");
-  const [deepseekKey, setDeepseekKey] = useState(localStorage.getItem("eye_deepseek_key") || "");
-  const [doubaoKey, setDoubaoKey] = useState(localStorage.getItem("eye_doubao_key") || "");
-  const [kimiKey, setKimiKey] = useState(localStorage.getItem("eye_kimi_key") || "");
-  const [claudeKey, setClaudeKey] = useState(localStorage.getItem("eye_claude_key") || "");
-  const [openaiKey, setOpenaiKey] = useState(localStorage.getItem("eye_openai_key") || "");
+  const [longTermMemory, setLongTermMemory] = useState(localStorage.getItem("uni_brain_memory") || "尚未记录。");
+  const [geminiKey, setGeminiKey] = useState(localStorage.getItem("uni_gemini_key") || "");
+  const [deepseekKey, setDeepseekKey] = useState(localStorage.getItem("uni_deepseek_key") || "");
+  const [doubaoKey, setDoubaoKey] = useState(localStorage.getItem("uni_doubao_key") || "");
+  const [kimiKey, setKimiKey] = useState(localStorage.getItem("uni_kimi_key") || "");
+  const [claudeKey, setClaudeKey] = useState(localStorage.getItem("uni_claude_key") || "");
+  const [openaiKey, setOpenaiKey] = useState(localStorage.getItem("uni_openai_key") || "");
   
   const [customModels, setCustomModels] = useState<{id:string, name:string, provider:string}[]>(() => {
-    try { return JSON.parse(localStorage.getItem("eye_custom_models") || "[]"); } catch { return[]; }
+    try { return JSON.parse(localStorage.getItem("uni_custom_models") || "[]"); } catch { return[]; }
   });
 
-  const [showReasoning, setShowReasoning] = useState(localStorage.getItem("eye_show_reasoning") !== "false");
-  const [autoUpdateBrain, setAutoUpdateBrain] = useState(localStorage.getItem("eye_auto_brain") !== "false");
+  const [showReasoning, setShowReasoning] = useState(localStorage.getItem("uni_show_reasoning") !== "false");
+  const [autoUpdateBrain, setAutoUpdateBrain] = useState(localStorage.getItem("uni_auto_brain") !== "false");
   const [showKeys, setShowKeys] = useState(false);
 
   const [token, setToken] = useState(localStorage.getItem("user_token") || "");
@@ -185,8 +219,6 @@ export default function App() {
   const [poorAdmins, setPoorAdmins] = useState<any[]>([]);
   const [adminLogs, setAdminLogs] = useState<any[]>([]);
   const [resetRequests, setResetRequests] = useState<any[]>([]);
-  
-  // ✅ 修复点：这里补回了上一版不小心删掉的管理员创建表单状态
   const [newAdminForm, setNewAdminForm] = useState({ user: "", pass: "" });
 
   const [viewUserSessions, setViewUserSessions] = useState<any>(null);
@@ -235,7 +267,7 @@ export default function App() {
     const cleanSessions = sessions.map((s: ChatSession) => ({ ...s, messages: s.messages.map((m: Message) => ({ ...m, previewImages:[] })) }));
     saveToIDB(STORAGE_KEY, cleanSessions).catch(e => console.error("IDB 写入失败:", e));
 
-    localStorage.setItem("eye_brain_memory", longTermMemory);
+    localStorage.setItem("uni_brain_memory", longTermMemory);
     localStorage.setItem("user_token", token);
     localStorage.setItem("saved_username", username);
     localStorage.setItem("is_admin", isAdmin ? "true" : "false");
@@ -264,24 +296,43 @@ export default function App() {
     return () => { if (interval) clearInterval(interval); };
   }, [isLoading]);
 
-  const triggerBrainUpdate = async (userText: string, aiText: string) => {
+  const triggerBrainUpdate = async (userText: string, aiText: string, provider: string, modelId: string, apiKey: string) => {
     if (!autoUpdateBrain || !userText) return;
-    const prompt = `你是一个全局记忆提炼系统。请分析以下对话，提取用户的习惯偏好。如有，按 "FACT: [具体事实]" 格式输出，没有回复 NONE。\n用户：${userText}\nAI：${aiText.slice(0, 300)}...`;
+    
+    const prompt = `你是一个负责维护 Uniflourish 用户长期记忆的底层系统引擎。
+【当前已存在的记忆库】：
+${longTermMemory}
+
+【最新发生的对话】：
+用户：${userText}
+AI回答：${aiText.slice(0, 300)}...
+
+核心规则与指令（必须绝对遵守）：
+1. 检查最新对话是否有值得长期记录的用户习惯、偏好或事实。如果完全没有，你必须只输出：NONE
+2. 如果有新信息，请把新信息与【当前记忆库】进行合并。删除陈旧、重复或矛盾的条目，整理成一份全新的长期记忆文本。
+3. 你的输出将作为机器代码直接覆盖原记忆库！所以严禁输出如“好的”、“已更新”、“总结如下”等聊天废话。直接输出整理后的纯记忆内容即可！`;
+
     try {
-      let newMemory = "";
-      if (geminiKey) {
-        const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }], safetySettings:[{ category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" }, { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" }, { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" }, { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }] };
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${geminiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-        const d = await res.json(); newMemory = d.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      } else if (deepseekKey) {
-        const res = await fetch("https://api.deepseek.com/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${deepseekKey}` }, body: JSON.stringify({ model: "deepseek-v4-flash", messages: [{ role: "user", content: prompt }] }) });
-        const d = await res.json(); newMemory = d.choices?.[0]?.message?.content || "";
+      let newMemory = await fetchTextLLM(provider, modelId, apiKey, prompt);
+      if (newMemory) {
+        let cleanMem = newMemory.trim();
+        if (cleanMem !== "NONE" && !cleanMem.toUpperCase().includes("NONE")) {
+          cleanMem = cleanMem.replace(/^(好的|明白了|没问题|收到|以下是).*?[:：\n]/g, '').trim();
+          setLongTermMemory(cleanMem);
+        }
       }
-      if (newMemory.includes("FACT:")) {
-        const facts = newMemory.split("\n").filter(l => l.includes("FACT:")).map(l => l.replace("FACT:", "").trim());
-        if (facts.length > 0) setLongTermMemory(prev => (prev + (prev.endsWith("。") || prev === "" ? "" : "\n") + facts.map(f => "- " + f).join("\n")).trim());
+    } catch (e) { console.warn("记忆融合提取失败:", e); }
+  };
+
+  const generateAutoTitle = async (sessionId: string, text: string, provider: string, modelId: string, apiKey: string) => {
+    const prompt = `请根据以下用户的输入，概括一个不超过10个字的简短标题，只输出标题内容，不要带任何双引号、句号等符号:\n${text}`;
+    try {
+      let title = await fetchTextLLM(provider, modelId, apiKey, prompt);
+      if (title) {
+        title = title.replace(/["'”’「」。]/g, '').trim();
+        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title } : s));
       }
-    } catch (e) { }
+    } catch (e) { console.warn("自动标题生成失败:", e); }
   };
 
   const handleAuth = async () => {
@@ -331,15 +382,28 @@ export default function App() {
     } catch (e: any) { showToast(e.message, 'error'); }
   }
 
-  const confirmLogout = () => {
+  const confirmLogout = async () => {
     setToken(""); setUsername(""); setIsAdmin(false); setAdminRole(""); setIsLogoutConfirmOpen(false);
+    
     setGeminiKey(""); setDeepseekKey(""); setDoubaoKey(""); setKimiKey(""); setClaudeKey(""); setOpenaiKey("");
+    setCustomModels([]); setLongTermMemory("尚未记录。"); setAttachments([]); setInputText("");
     
-    ['user_token', 'saved_username', 'is_admin', 'admin_role', 
-     'eye_gemini_key', 'eye_deepseek_key', 'eye_doubao_key', 'eye_kimi_key', 
-     'eye_claude_key', 'eye_openai_key'].forEach(k => localStorage.removeItem(k));
+    const blankId = Date.now().toString();
+    setSessions([{ id: blankId, title: "新对话", messages: [], createdAt: Date.now() }]);
+    setCurrentSessionId(blankId);['user_token', 'saved_username', 'is_admin', 'admin_role', 
+     'uni_gemini_key', 'uni_deepseek_key', 'uni_doubao_key', 'uni_kimi_key', 
+     'uni_claude_key', 'uni_openai_key', 'uni_custom_models', 'uni_show_reasoning',
+     'uni_auto_brain', 'uni_brain_memory'].forEach(k => localStorage.removeItem(k));
     
-    showToast("已安全退出，配置已清空");
+    localStorage.removeItem(STORAGE_KEY);
+
+    try {
+      const db = await initDB();
+      const tx = db.transaction("store", "readwrite");
+      tx.objectStore("store").clear();
+    } catch (e) {}
+
+    showToast("已安全退出，配置及历史记忆已彻底清空");
   };
 
   const fetchAdminUsers = async (adminToken: string) => {
@@ -430,10 +494,12 @@ export default function App() {
     const text = inputText.trim() || "分析内容。";
     const userMsg: Message = { id: Date.now().toString(), role: "user", content: text, previewImages: curAtts.filter(a => a.type === 'image').map(a => a.displayUrl) };
     
+    const isFirstMessage = sessions.find(s => s.id === currentSessionId)?.messages.length === 0;
+
     setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, userMsg] } : s));
     setInputText(""); setAttachments([]); setIsLoading(true);
 
-    const sys = `你是一个全能助手。对话背景：\n${longTermMemory}`;
+    const sys = `你是 Uniflourish 的全能AI助理。对话背景：\n${longTermMemory}`;
     try {
       let rText = ""; let rReason = "";
 
@@ -442,7 +508,6 @@ export default function App() {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${activeModel.id}:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: payload }) });
         const d = await res.json(); if (d.error) throw new Error(d.error.message); rText = d.candidates[0].content.parts[0].text;
       } else if (provider === "claude") {
-        // ✅ 修复点：添加了 any[] 强制类型申明解决 TS 报错
         const messages: any[] = sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role, content: m.content }));
         const userContent: any[] =[];
         curAtts.filter(a => a.type === 'image').forEach(a => userContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: a.apiBase64 } }));
@@ -468,8 +533,10 @@ export default function App() {
         rText = d.choices[0].message.content; rReason = d.choices[0].message.reasoning_content || "";
       }
 
-      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, { id: Date.now().toString(), role: "assistant", content: rText, reasoning: rReason, modelName: activeModel.name }], title: s.messages.length === 0 ? text.slice(0, 15) : s.title } : s));
-      triggerBrainUpdate(text, rText);
+      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, { id: Date.now().toString(), role: "assistant", content: rText, reasoning: rReason, modelName: activeModel.name }] } : s));
+      
+      if (isFirstMessage) generateAutoTitle(currentSessionId, text, provider, activeModel.id, apiKey);
+      triggerBrainUpdate(text, rText, provider, activeModel.id, apiKey);
 
     } catch (err: any) { showToast("API 报错: " + err.message, "error"); } finally { setIsLoading(false); scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }
   };
@@ -544,7 +611,7 @@ export default function App() {
             <div className="flex items-center gap-3">
               <ShieldAlert className={adminRole === 'super_admin' ? "text-red-500" : "text-amber-500"} size={32} />
               <div>
-                <h1 className="text-2xl font-black tracking-widest">系统监控中心</h1>
+                <h1 className="text-2xl font-black tracking-widest">Uniflourish 监控中心</h1>
                 <p className="text-xs text-slate-400">当前权限身份：{adminRole === 'super_admin' ? '👑 高级全栈透视' : '🛡️ 基础安全管控'}</p>
               </div>
             </div>
@@ -756,7 +823,7 @@ export default function App() {
             <div className="p-4 bg-slate-50 border-t border-gray-200 space-y-2 shrink-0">
               <button onClick={() => setIsBrainOpen(true)} className="w-full flex items-center gap-2 text-slate-500 hover:text-blue-600 p-2 rounded-lg hover:bg-white text-sm font-medium transition-all"><Brain size={16} /> 长期记忆</button>
               <button onClick={() => setIsSettingsOpen(true)} className="w-full flex items-center gap-2 text-slate-500 hover:text-black p-2 rounded-lg hover:bg-white text-sm font-medium transition-all"><Settings size={16} /> 设置中心</button>
-              <div className="pt-1">
+              <div className="pt-2 pb-1 relative">
                 {token ? (
                   <div className="flex items-center justify-between p-2 bg-blue-50 rounded-lg border border-blue-100 group">
                     <div className="flex items-center gap-2 text-blue-600 font-bold text-xs truncate max-w-[120px]"><UserIcon size={14} /> {username} {isSyncing && <Cloud size={12} className="animate-pulse" />}</div>
@@ -768,6 +835,7 @@ export default function App() {
                 ) : (
                   <button onClick={() => setIsAuthOpen(true)} className="w-full bg-blue-600 text-white p-2 rounded-lg text-xs font-bold hover:bg-blue-700 transition-all flex items-center justify-center gap-2 shadow-sm"><Cloud size={14} /> 登录同步记忆</button>
                 )}
+                <div className="text-[10px] text-slate-400 font-bold mt-2 text-center w-full tracking-wider opacity-60 pointer-events-none">{VERSION}</div>
               </div>
             </div>
           </aside>
@@ -895,7 +963,7 @@ export default function App() {
             <h2 className="text-xl font-black">确认退出？</h2>
             <div className="flex gap-3 pt-2">
               <button onClick={() => setIsLogoutConfirmOpen(false)} className="flex-1 bg-slate-100 p-3 rounded-xl font-bold hover:bg-slate-200 transition-colors">点错了</button>
-              <button onClick={confirmLogout} className="flex-1 bg-red-600 text-white p-3 rounded-xl font-bold hover:bg-red-700 transition-colors">确定退出</button>
+              <button onClick={confirmLogout} className="flex-1 bg-red-600 text-white p-3 rounded-xl font-bold hover:bg-red-700 transition-colors">彻底退出</button>
             </div>
           </div>
         </div>
@@ -905,7 +973,7 @@ export default function App() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[90] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl flex flex-col h-[70vh] animate-in zoom-in duration-200">
             <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-blue-50/50">
-              <h2 className="font-bold text-xl flex items-center gap-2 text-blue-700"><Brain size={24} /> 长期记忆</h2>
+              <h2 className="font-bold text-xl flex items-center gap-2 text-blue-700"><Brain size={24} /> 长期记忆融合核心</h2>
               <button onClick={() => setIsBrainOpen(false)} className="text-slate-400 hover:text-black transition-all"><X size={24} /></button>
             </div>
             <div className="flex-1 p-6"><textarea className="w-full h-full bg-slate-50 p-4 rounded-2xl outline-none border border-gray-200 text-sm leading-relaxed" value={longTermMemory} onChange={(e) => setLongTermMemory(e.target.value)} /></div>
@@ -982,15 +1050,15 @@ export default function App() {
             <div className="p-6 bg-gray-50 border-t border-gray-100 flex gap-3 shrink-0">
               <button onClick={() => setIsSettingsOpen(false)} className="flex-1 bg-white border border-gray-200 p-3 rounded-xl font-bold text-sm hover:bg-slate-50 transition-colors">取消</button>
               <button onClick={() => {
-                localStorage.setItem("eye_gemini_key", geminiKey);
-                localStorage.setItem("eye_deepseek_key", deepseekKey);
-                localStorage.setItem("eye_doubao_key", doubaoKey);
-                localStorage.setItem("eye_kimi_key", kimiKey);
-                localStorage.setItem("eye_claude_key", claudeKey);
-                localStorage.setItem("eye_openai_key", openaiKey);
-                localStorage.setItem("eye_custom_models", JSON.stringify(customModels));
-                localStorage.setItem("eye_show_reasoning", showReasoning.toString());
-                localStorage.setItem("eye_auto_brain", autoUpdateBrain.toString());
+                localStorage.setItem("uni_gemini_key", geminiKey);
+                localStorage.setItem("uni_deepseek_key", deepseekKey);
+                localStorage.setItem("uni_doubao_key", doubaoKey);
+                localStorage.setItem("uni_kimi_key", kimiKey);
+                localStorage.setItem("uni_claude_key", claudeKey);
+                localStorage.setItem("uni_openai_key", openaiKey);
+                localStorage.setItem("uni_custom_models", JSON.stringify(customModels));
+                localStorage.setItem("uni_show_reasoning", showReasoning.toString());
+                localStorage.setItem("uni_auto_brain", autoUpdateBrain.toString());
                 setIsSettingsOpen(false); showToast("配置已保存");
               }} className="flex-1 bg-black text-white p-3 rounded-xl font-bold shadow-lg text-sm flex items-center justify-center gap-2 hover:bg-slate-800 transition-colors"><Save size={18} /> 保存配置</button>
             </div>
