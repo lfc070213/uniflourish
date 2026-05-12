@@ -1,3 +1,4 @@
+// 版本号: v1.51 (修复 TS 报错版)
 import "./App.css";
 import "katex/dist/katex.min.css";
 import { useState, useRef, useEffect } from "react";
@@ -22,7 +23,7 @@ const MODELS =[
   { id: "deepseek-v4-pro", name: "deepseek-v4-pro", provider: "deepseek" },
 ];
 
-const STORAGE_KEY = "you_are_my_eyes_v1.3.1_stable";
+const STORAGE_KEY = "you_are_my_eyes_v1.5.1_stable";
 const SERVER_URL = "https://79866b64.r8.cpolar.top";
 
 const standardizeContent = (text: string) => {
@@ -137,6 +138,15 @@ export default function App() {
   const [longTermMemory, setLongTermMemory] = useState(localStorage.getItem("eye_brain_memory") || "尚未记录。");
   const [geminiKey, setGeminiKey] = useState(localStorage.getItem("eye_gemini_key") || "");
   const [deepseekKey, setDeepseekKey] = useState(localStorage.getItem("eye_deepseek_key") || "");
+  const [doubaoKey, setDoubaoKey] = useState(localStorage.getItem("eye_doubao_key") || "");
+  const [kimiKey, setKimiKey] = useState(localStorage.getItem("eye_kimi_key") || "");
+  const [claudeKey, setClaudeKey] = useState(localStorage.getItem("eye_claude_key") || "");
+  const [openaiKey, setOpenaiKey] = useState(localStorage.getItem("eye_openai_key") || "");
+  
+  const [customModels, setCustomModels] = useState<{id:string, name:string, provider:string}[]>(() => {
+    try { return JSON.parse(localStorage.getItem("eye_custom_models") || "[]"); } catch { return[]; }
+  });
+
   const [showReasoning, setShowReasoning] = useState(localStorage.getItem("eye_show_reasoning") !== "false");
   const [autoUpdateBrain, setAutoUpdateBrain] = useState(localStorage.getItem("eye_auto_brain") !== "false");
   const [showKeys, setShowKeys] = useState(false);
@@ -157,7 +167,8 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const isInitialLoad = useRef(true);
 
-  const [selectedModel, setSelectedModel] = useState(MODELS[0]);
+  const ALL_MODELS = [...MODELS, ...customModels];
+  const [selectedModel, setSelectedModel] = useState(ALL_MODELS[0]);
   const [inputText, setInputText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -167,11 +178,15 @@ export default function App() {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
 
+  const [newModelForm, setNewModelForm] = useState({ id: "", name: "", provider: "openai" });
+
   const [adminTab, setAdminTab] = useState<'users' | 'admins' | 'logs' | 'requests'>('users');
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [poorAdmins, setPoorAdmins] = useState<any[]>([]);
   const [adminLogs, setAdminLogs] = useState<any[]>([]);
   const [resetRequests, setResetRequests] = useState<any[]>([]);
+  
+  // ✅ 修复点：这里补回了上一版不小心删掉的管理员创建表单状态
   const [newAdminForm, setNewAdminForm] = useState({ user: "", pass: "" });
 
   const [viewUserSessions, setViewUserSessions] = useState<any>(null);
@@ -191,14 +206,12 @@ export default function App() {
   useEffect(() => {
     loadFromIDB(STORAGE_KEY).then(saved => {
       if (saved && saved.length > 0) {
-        setSessions(saved);
-        setCurrentSessionId(saved[0].id);
+        setSessions(saved); setCurrentSessionId(saved[0].id);
       } else {
         const oldSaved = localStorage.getItem(STORAGE_KEY);
         if (oldSaved) {
           const parsed = JSON.parse(oldSaved);
-          setSessions(parsed);
-          if (parsed.length > 0) setCurrentSessionId(parsed[0].id);
+          setSessions(parsed); if (parsed.length > 0) setCurrentSessionId(parsed[0].id);
           saveToIDB(STORAGE_KEY, parsed);
         }
       }
@@ -237,12 +250,12 @@ export default function App() {
       try {
         await fetch(`${SERVER_URL}/api/sync`, {
           method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ sessions, longTermMemory, geminiKey, deepseekKey })
+          body: JSON.stringify({ sessions, longTermMemory, geminiKey, deepseekKey, doubaoKey, kimiKey, claudeKey, openaiKey, customModels })
         });
       } catch (e) { } finally { setIsSyncing(false); }
     }, 3000);
     return () => clearTimeout(timer);
-  }, [sessions, longTermMemory, token, username, geminiKey, deepseekKey, isDataLoaded, isAdmin, adminRole]);
+  }, [sessions, longTermMemory, token, username, geminiKey, deepseekKey, doubaoKey, kimiKey, claudeKey, openaiKey, customModels, isDataLoaded, isAdmin, adminRole]);
 
   useEffect(() => {
     let interval: any;
@@ -256,11 +269,11 @@ export default function App() {
     const prompt = `你是一个全局记忆提炼系统。请分析以下对话，提取用户的习惯偏好。如有，按 "FACT: [具体事实]" 格式输出，没有回复 NONE。\n用户：${userText}\nAI：${aiText.slice(0, 300)}...`;
     try {
       let newMemory = "";
-      if (selectedModel.provider === "google") {
+      if (geminiKey) {
         const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }], safetySettings:[{ category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" }, { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" }, { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" }, { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }] };
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${geminiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         const d = await res.json(); newMemory = d.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      } else {
+      } else if (deepseekKey) {
         const res = await fetch("https://api.deepseek.com/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${deepseekKey}` }, body: JSON.stringify({ model: "deepseek-v4-flash", messages: [{ role: "user", content: prompt }] }) });
         const d = await res.json(); newMemory = d.choices?.[0]?.message?.content || "";
       }
@@ -288,10 +301,13 @@ export default function App() {
           if (data.longTermMemory) setLongTermMemory(data.longTermMemory);
           if (data.geminiKey) setGeminiKey(data.geminiKey);
           if (data.deepseekKey) setDeepseekKey(data.deepseekKey);
+          if (data.doubaoKey) setDoubaoKey(data.doubaoKey);
+          if (data.kimiKey) setKimiKey(data.kimiKey);
+          if (data.claudeKey) setClaudeKey(data.claudeKey);
+          if (data.openaiKey) setOpenaiKey(data.openaiKey);
+          if (data.customModels) setCustomModels(data.customModels);
         }
-      } else {
-        showToast("注册成功，请登录"); setAuthMode('login');
-      }
+      } else { showToast("注册成功，请登录"); setAuthMode('login'); }
     } catch (e: any) { showToast(e.message, 'error'); }
   };
 
@@ -317,8 +333,13 @@ export default function App() {
 
   const confirmLogout = () => {
     setToken(""); setUsername(""); setIsAdmin(false); setAdminRole(""); setIsLogoutConfirmOpen(false);
-    localStorage.removeItem("user_token"); localStorage.removeItem("saved_username"); localStorage.removeItem("is_admin"); localStorage.removeItem("admin_role");
-    showToast("已安全退出");
+    setGeminiKey(""); setDeepseekKey(""); setDoubaoKey(""); setKimiKey(""); setClaudeKey(""); setOpenaiKey("");
+    
+    ['user_token', 'saved_username', 'is_admin', 'admin_role', 
+     'eye_gemini_key', 'eye_deepseek_key', 'eye_doubao_key', 'eye_kimi_key', 
+     'eye_claude_key', 'eye_openai_key'].forEach(k => localStorage.removeItem(k));
+    
+    showToast("已安全退出，配置已清空");
   };
 
   const fetchAdminUsers = async (adminToken: string) => {
@@ -329,20 +350,17 @@ export default function App() {
     } catch(e) {}
   };
   const fetchPoorAdmins = async (adminToken: string) => {
-    try {
-      const res = await fetch(`${SERVER_URL}/api/admin/poor-admins`, { headers: { "Authorization": `Bearer ${adminToken}` } });
+    try { const res = await fetch(`${SERVER_URL}/api/admin/poor-admins`, { headers: { "Authorization": `Bearer ${adminToken}` } });
       if (res.ok) setPoorAdmins(await res.json());
     } catch(e) {}
   };
   const fetchAdminLogs = async (adminToken: string) => {
-    try {
-      const res = await fetch(`${SERVER_URL}/api/admin/logs`, { headers: { "Authorization": `Bearer ${adminToken}` } });
+    try { const res = await fetch(`${SERVER_URL}/api/admin/logs`, { headers: { "Authorization": `Bearer ${adminToken}` } });
       if (res.ok) setAdminLogs(await res.json());
     } catch(e) {}
   };
   const fetchResetRequests = async (adminToken: string) => {
-    try {
-      const res = await fetch(`${SERVER_URL}/api/admin/reset-requests`, { headers: { "Authorization": `Bearer ${adminToken}` } });
+    try { const res = await fetch(`${SERVER_URL}/api/admin/reset-requests`, { headers: { "Authorization": `Bearer ${adminToken}` } });
       if (res.ok) setResetRequests(await res.json());
     } catch(e) {}
   };
@@ -387,9 +405,25 @@ export default function App() {
     setConfirmAction(null);
   };
 
+  const handleAddCustomModel = () => {
+    if (!newModelForm.id || !newModelForm.name) { showToast("模型名不能为空", "error"); return; }
+    setCustomModels(prev => [...prev, { id: newModelForm.id, name: newModelForm.name, provider: newModelForm.provider }]);
+    setNewModelForm({ id: "", name: "", provider: "openai" });
+  };
+
   const handleSend = async () => {
-    const key = selectedModel.provider === 'google' ? geminiKey : deepseekKey;
-    if (!key) { setIsSettingsOpen(true); return; }
+    const activeModel = ALL_MODELS.find(m => m.id === selectedModel.id) || ALL_MODELS[0];
+    const provider = activeModel.provider;
+
+    let apiKey = "";
+    if (provider === 'google') apiKey = geminiKey;
+    else if (provider === 'deepseek') apiKey = deepseekKey;
+    else if (provider === 'doubao') apiKey = doubaoKey;
+    else if (provider === 'kimi') apiKey = kimiKey;
+    else if (provider === 'claude') apiKey = claudeKey;
+    else if (provider === 'openai') apiKey = openaiKey;
+
+    if (!apiKey) { setIsSettingsOpen(true); showToast(`请先配置 ${provider} 的 API Key`, "error"); return; }
     if ((!inputText.trim() && attachments.length === 0) || isLoading || !currentSessionId) return;
 
     const curAtts = [...attachments];
@@ -402,17 +436,41 @@ export default function App() {
     const sys = `你是一个全能助手。对话背景：\n${longTermMemory}`;
     try {
       let rText = ""; let rReason = "";
-      if (selectedModel.provider === "google") {
+
+      if (provider === "google") {
         const payload = [{ role: "user", parts: [{ text: sys }] }, ...sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })), { role: "user", parts: [{ text }, ...curAtts.filter(a => a.type === 'image').map(a => ({ inline_data: { mime_type: "image/jpeg", data: a.apiBase64 } }))] }];
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.id}:generateContent?key=${geminiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: payload }) });
-        const d = await res.json(); rText = d.candidates[0].content.parts[0].text;
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${activeModel.id}:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: payload }) });
+        const d = await res.json(); if (d.error) throw new Error(d.error.message); rText = d.candidates[0].content.parts[0].text;
+      } else if (provider === "claude") {
+        // ✅ 修复点：添加了 any[] 强制类型申明解决 TS 报错
+        const messages: any[] = sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role, content: m.content }));
+        const userContent: any[] =[];
+        curAtts.filter(a => a.type === 'image').forEach(a => userContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: a.apiBase64 } }));
+        userContent.push({ type: "text", text: text });
+        messages.push({ role: "user", content: userContent });
+        const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerously-allow-browser": "true", "content-type": "application/json" }, body: JSON.stringify({ model: activeModel.id, messages: messages, system: sys, max_tokens: 4096 }) });
+        const d = await res.json(); if (d.error) throw new Error(d.error.message); rText = d.content[0].text;
       } else {
-        const dsMsgs =[{ role: "system", content: sys }, ...sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role, content: m.content })), { role: "user", content: curAtts.map(a => `[附件: ${a.name}]`).join("\n") + "\n" + text }];
-        const res = await fetch("https://api.deepseek.com/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${deepseekKey}` }, body: JSON.stringify({ model: selectedModel.id, messages: dsMsgs }) });
-        const d = await res.json(); rText = d.choices[0].message.content; rReason = d.choices[0].message.reasoning_content || "";
+        let url = "https://api.openai.com/v1/chat/completions";
+        if (provider === 'deepseek') url = "https://api.deepseek.com/chat/completions";
+        else if (provider === 'doubao') url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
+        else if (provider === 'kimi') url = "https://api.moonshot.cn/v1/chat/completions";
+
+        const dsMsgs: any[] = [{ role: "system", content: sys }, ...sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role, content: m.content }))];
+        if (provider === 'openai' && curAtts.filter(a => a.type === 'image').length > 0) {
+          dsMsgs.push({ role: "user", content: [{ type: "text", text: text }, ...curAtts.filter(a => a.type === 'image').map(a => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${a.apiBase64}` } }))] });
+        } else {
+          dsMsgs.push({ role: "user", content: curAtts.length > 0 ? curAtts.map(a => `[附件: ${a.name}]`).join("\n") + "\n" + text : text });
+        }
+
+        const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` }, body: JSON.stringify({ model: activeModel.id, messages: dsMsgs }) });
+        const d = await res.json(); if (d.error) throw new Error(d.error.message);
+        rText = d.choices[0].message.content; rReason = d.choices[0].message.reasoning_content || "";
       }
-      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, { id: Date.now().toString(), role: "assistant", content: rText, reasoning: rReason, modelName: selectedModel.name }], title: s.messages.length === 0 ? text.slice(0, 15) : s.title } : s));
+
+      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, { id: Date.now().toString(), role: "assistant", content: rText, reasoning: rReason, modelName: activeModel.name }], title: s.messages.length === 0 ? text.slice(0, 15) : s.title } : s));
       triggerBrainUpdate(text, rText);
+
     } catch (err: any) { showToast("API 报错: " + err.message, "error"); } finally { setIsLoading(false); scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }
   };
 
@@ -717,8 +775,10 @@ export default function App() {
           <main className="flex flex-col h-full overflow-hidden bg-white">
             <header className="h-[71px] flex items-center justify-center border-b border-gray-200 bg-white/90 backdrop-blur-md sticky top-0 z-10 shrink-0">
               <div className="flex items-center gap-2 bg-slate-100 px-4 py-1.5 rounded-full border border-gray-200 shadow-sm">
-                <select value={selectedModel.id} onChange={(e) => setSelectedModel(MODELS.find(m => m.id === e.target.value)!)} className="bg-transparent outline-none font-bold text-[11px] cursor-pointer appearance-none pr-4 text-gray-700">{MODELS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select>
-                <ChevronDown size={12} className="text-gray-400" />
+                <select value={selectedModel.id} onChange={(e) => { const found = ALL_MODELS.find(m => m.id === e.target.value); if (found) setSelectedModel(found); }} className="bg-transparent outline-none font-bold text-[11px] cursor-pointer appearance-none pr-4 text-gray-700 max-w-[200px] truncate">
+                  {ALL_MODELS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                <ChevronDown size={12} className="text-gray-400 shrink-0" />
               </div>
             </header>
 
@@ -787,6 +847,7 @@ export default function App() {
         </>
       )}
 
+      {/* ================= 常规功能弹窗 ================= */}
       {isPwdOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-8 space-y-6 animate-in zoom-in duration-200 relative">
@@ -801,37 +862,27 @@ export default function App() {
         </div>
       )}
 
-      {/* 🚨 包含【忘记密码模式】的用户登录/注册面板 */}
       {isAuthOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-8 space-y-6 relative animate-in zoom-in duration-200">
-            <h2 className="text-2xl font-black text-center">
-              {authMode === 'login' ? '欢迎回来' : authMode === 'register' ? '开启同步' : '重置密码'}
-            </h2>
-            
+            <h2 className="text-2xl font-black text-center">{authMode === 'login' ? '欢迎回来' : authMode === 'register' ? '开启同步' : '重置密码'}</h2>
             <div className="space-y-4">
               {authMode === 'forgot' && <p className="text-xs text-slate-500 text-center font-bold">输入需要找回密码的用户名，<br/>我们将向管理员发送求助申请。</p>}
               <input type="text" placeholder="用户名" className="w-full bg-slate-100 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" value={authForm.user} onChange={e => setAuthForm({ ...authForm, user: e.target.value })} />
               {authMode !== 'forgot' && <input type="password" placeholder="密码" className="w-full bg-slate-100 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" value={authForm.pass} onChange={e => setAuthForm({ ...authForm, pass: e.target.value })} />}
-              
               {authMode === 'forgot' ? (
                 <button onClick={handleForgotPassword} className="w-full bg-amber-500 text-white p-3 rounded-xl font-bold hover:bg-amber-600 transition-all">提交申请 / 查询状态</button>
               ) : (
                 <button onClick={handleAuth} className="w-full bg-black text-white p-3 rounded-xl font-bold hover:bg-slate-800 transition-all">立即操作</button>
               )}
             </div>
-
             <div className="flex justify-between items-center w-full text-blue-600 text-xs font-bold px-2">
               {authMode === 'login' ? (
-                <>
-                  <button onClick={() => setAuthMode('forgot')} className="hover:underline">忘记密码？</button>
-                  <button onClick={() => setAuthMode('register')} className="hover:underline">没有账号？注册</button>
-                </>
+                <><button onClick={() => setAuthMode('forgot')} className="hover:underline">忘记密码？</button><button onClick={() => setAuthMode('register')} className="hover:underline">没有账号？注册</button></>
               ) : (
                 <button onClick={() => setAuthMode('login')} className="hover:underline w-full text-center">返回登录</button>
               )}
             </div>
-
             <button onClick={() => setIsAuthOpen(false)} className="absolute top-4 right-4 text-slate-300 hover:text-black transition-colors"><X size={24} /></button>
           </div>
         </div>
@@ -867,40 +918,77 @@ export default function App() {
 
       {isSettingsOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[90] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl flex flex-col max-h-[85vh] animate-in fade-in zoom-in duration-200">
+            <div className="p-6 border-b border-gray-100 bg-gray-50 flex items-center justify-between shrink-0">
               <h2 className="font-bold text-xl flex items-center gap-2 text-gray-800"><Settings size={20} /> 设置中心</h2>
               <button onClick={() => setIsSettingsOpen(false)} className="text-slate-400 hover:text-black transition-all"><X size={24} /></button>
             </div>
-            <div className="p-6 space-y-4">
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Gemini API Key</label>
-                <div className="relative">
-                  <input type={showKeys ? "text" : "password"} value={geminiKey} onChange={(e) => setGeminiKey(e.target.value)} className="w-full bg-slate-100 p-3 pr-12 rounded-xl outline-none focus:ring-2 focus:ring-black" />
-                  <button onClick={() => setShowKeys(!showKeys)} className="absolute right-3 top-3 text-slate-400 hover:text-black">{showKeys ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+            
+            <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar">
+              <div className="space-y-4">
+                <h3 className="font-bold text-slate-800 flex items-center gap-2"><Key size={18}/> 核心 API Keys</h3>
+                {[
+                  { id: 'gemini', label: 'Gemini', value: geminiKey, set: setGeminiKey },
+                  { id: 'deepseek', label: 'DeepSeek', value: deepseekKey, set: setDeepseekKey },
+                  { id: 'doubao', label: '豆包 (Doubao)', value: doubaoKey, set: setDoubaoKey },
+                  { id: 'kimi', label: 'Kimi', value: kimiKey, set: setKimiKey },
+                  { id: 'claude', label: 'Claude', value: claudeKey, set: setClaudeKey },
+                  { id: 'openai', label: 'ChatGPT (OpenAI)', value: openaiKey, set: setOpenaiKey },
+                ].map(prov => (
+                  <div key={prov.id} className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">{prov.label} API Key</label>
+                    <div className="relative">
+                      <input type={showKeys ? "text" : "password"} value={prov.value} onChange={(e) => prov.set(e.target.value)} className="w-full bg-slate-100 p-3 pr-12 rounded-xl outline-none focus:ring-2 focus:ring-black text-sm" />
+                      <button onClick={() => setShowKeys(!showKeys)} className="absolute right-3 top-3 text-slate-400 hover:text-black">{showKeys ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="space-y-4 pt-4 border-t border-slate-200">
+                <h3 className="font-bold text-slate-800 flex items-center gap-2"><Database size={18}/> 自定义模型</h3>
+                <div className="flex gap-2 items-center">
+                  <select className="bg-slate-100 p-2 rounded-lg text-sm outline-none font-bold text-slate-600" value={newModelForm.provider} onChange={e => setNewModelForm({...newModelForm, provider: e.target.value})}>
+                    <option value="openai">ChatGPT</option>
+                    <option value="claude">Claude</option>
+                    <option value="google">Gemini</option>
+                    <option value="deepseek">DeepSeek</option>
+                    <option value="doubao">豆包</option>
+                    <option value="kimi">Kimi</option>
+                  </select>
+                  <input type="text" placeholder="输入模型 ID" className="flex-1 bg-slate-100 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-black" value={newModelForm.id} onChange={e => setNewModelForm({...newModelForm, id: e.target.value, name: e.target.value})} />
+                  <button onClick={handleAddCustomModel} className="bg-black text-white p-2 rounded-lg hover:bg-slate-800 transition-colors"><Plus size={16}/></button>
                 </div>
+                {customModels.map(m => (
+                  <div key={m.id} className="flex justify-between items-center bg-slate-50 p-2 rounded-lg text-sm border border-slate-200">
+                    <span className="font-bold truncate max-w-[200px]">{m.name} <span className="text-[10px] text-slate-400 ml-2">({m.provider})</span></span>
+                    <button onClick={() => setCustomModels(prev => prev.filter(x => x.id !== m.id))} className="text-red-500 hover:bg-red-100 p-1 rounded transition-colors"><Trash2 size={14}/></button>
+                  </div>
+                ))}
               </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">DeepSeek API Key</label>
-                <div className="relative">
-                  <input type={showKeys ? "text" : "password"} value={deepseekKey} onChange={(e) => setDeepseekKey(e.target.value)} className="w-full bg-slate-100 p-3 pr-12 rounded-xl outline-none focus:ring-2 focus:ring-black" />
-                  <button onClick={() => setShowKeys(!showKeys)} className="absolute right-3 top-3 text-slate-400 hover:text-black">{showKeys ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+
+              <div className="space-y-2 pt-4 border-t border-slate-200">
+                <div className="flex items-center justify-between p-3 bg-slate-100 rounded-2xl">
+                  <div className="text-sm font-bold flex items-center gap-2"><BrainCircuit size={16} className="text-blue-500" /> 显示思考过程</div>
+                  <button onClick={() => setShowReasoning(!showReasoning)} className={`w-10 h-5 rounded-full relative transition-colors ${showReasoning ? 'bg-black' : 'bg-slate-300'}`}><div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${showReasoning ? 'left-5' : 'left-1'}`} /></button>
                 </div>
-              </div>
-              <div className="flex items-center justify-between p-3 bg-slate-100 rounded-2xl">
-                <div className="text-sm font-bold flex items-center gap-2"><BrainCircuit size={16} className="text-blue-500" /> 显示思考过程</div>
-                <button onClick={() => setShowReasoning(!showReasoning)} className={`w-10 h-5 rounded-full relative transition-colors ${showReasoning ? 'bg-black' : 'bg-slate-300'}`}><div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${showReasoning ? 'left-5' : 'left-1'}`} /></button>
-              </div>
-              <div className="flex items-center justify-between p-3 bg-slate-100 rounded-2xl">
-                <div className="text-sm font-bold flex items-center gap-2">{autoUpdateBrain ? <Zap size={16} className="text-amber-500" /> : <ZapOff size={16} className="text-slate-400" />} 自动提炼长期记忆</div>
-                <button onClick={() => setAutoUpdateBrain(!autoUpdateBrain)} className={`w-10 h-5 rounded-full relative transition-colors ${autoUpdateBrain ? 'bg-amber-500' : 'bg-slate-300'}`}><div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${autoUpdateBrain ? 'left-5' : 'left-1'}`} /></button>
+                <div className="flex items-center justify-between p-3 bg-slate-100 rounded-2xl">
+                  <div className="text-sm font-bold flex items-center gap-2">{autoUpdateBrain ? <Zap size={16} className="text-amber-500" /> : <ZapOff size={16} className="text-slate-400" />} 自动提炼长期记忆</div>
+                  <button onClick={() => setAutoUpdateBrain(!autoUpdateBrain)} className={`w-10 h-5 rounded-full relative transition-colors ${autoUpdateBrain ? 'bg-amber-500' : 'bg-slate-300'}`}><div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${autoUpdateBrain ? 'left-5' : 'left-1'}`} /></button>
+                </div>
               </div>
             </div>
-            <div className="p-6 bg-gray-50 border-t border-gray-100 flex gap-3">
+
+            <div className="p-6 bg-gray-50 border-t border-gray-100 flex gap-3 shrink-0">
               <button onClick={() => setIsSettingsOpen(false)} className="flex-1 bg-white border border-gray-200 p-3 rounded-xl font-bold text-sm hover:bg-slate-50 transition-colors">取消</button>
               <button onClick={() => {
                 localStorage.setItem("eye_gemini_key", geminiKey);
                 localStorage.setItem("eye_deepseek_key", deepseekKey);
+                localStorage.setItem("eye_doubao_key", doubaoKey);
+                localStorage.setItem("eye_kimi_key", kimiKey);
+                localStorage.setItem("eye_claude_key", claudeKey);
+                localStorage.setItem("eye_openai_key", openaiKey);
+                localStorage.setItem("eye_custom_models", JSON.stringify(customModels));
                 localStorage.setItem("eye_show_reasoning", showReasoning.toString());
                 localStorage.setItem("eye_auto_brain", autoUpdateBrain.toString());
                 setIsSettingsOpen(false); showToast("配置已保存");
