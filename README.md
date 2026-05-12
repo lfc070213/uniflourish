@@ -1,78 +1,83 @@
-# Tauri + React + Typescript
-
-This template should help get you started developing with Tauri, React and Typescript in Vite.
-
-## Recommended IDE Setup
-
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
-# 👁️ You Are My Eyes (你是我的眼) | v1.4.0
-
-**You Are My Eyes** 是一款基于 **Tauri + React** 构建的跨平台个人 AI 助手。它不仅支持多模型无缝切换，更拥有“云端同步大脑”，让你的 Mac 和 Windows 电脑共享同一份聊天记忆与配置。
-
-## ✨ 正式版 v1.4.0 核心特性
-
-- 🔄 **全量云端同步**：基于 Ubuntu + MongoDB 后端，实时同步会话列表、长期记忆、甚至你的 API Key。
-- 🤖 **五大顶级模型**：
-  - Gemini 3.1 (Flash Lite / Preview / Pro)
-  - DeepSeek V4 (Flash / Pro)
-- 🧠 **长期记忆系统**：支持手动编辑和 AI 自动提炼用户信息，跨对话通用，让 AI 越聊越懂你。
-- 📐 **教科书级排版**：针对 DeepSeek 数学公式乱码进行深度修复，提供完美的 LaTeX 渲染体验。
-- 🖼️ **多模态加固**：
-  - 支持图片压缩发送，彻底解决 Mac M1 上因大图 Base64 导致的白屏崩溃。
-  - 支持 PDF 文本解析与对话。
-- 🎨 **极致 UI 对齐**：采用 CSS Grid 布局，侧边栏与主界面线条像素级对齐，视觉极简呼吸感。
-
----
-
-## 🛠️ 环境布置与安装
-
-### 1. 基础环境 (Mac & Windows)
-确保你的电脑安装了以下工具：
-- **Node.js**: v18+ (推荐 v20 LTS)
-- **Rust**: [rustup.rs](https://rustup.rs/) (Tauri 内核需要)
-- **C++ 生成工具**: (仅 Windows) 安装 Visual Studio Build Tools 并勾选“使用 C++ 的桌面开发”。
-
-### 2. 克隆与初始化
-```bash
-# 克隆代码
-git clone https://github.com/lfc070213/you-are-my-eyes.git
-cd you-are-my-eyes
-
-# 安装前端依赖
-npm install
-#3. 配置 API Key(现版本不用管，可在应用中设置)
-#在项目根目录创建 .env 文件（或在软件启动后的“设置中心”直接填写，登录后可同步）：
-#code
-#Env
-#VITE_GEMINI_API_KEY=你的Gemini_Key
-#VITE_DEEPSEEK_API_KEY=你的DeepSeek_Key
-#4. 部署后端 (Ubuntu 服务器)（仅作者使用）
-#确保服务器安装了 Node.js 和 MongoDB。
-#进入 you-are-my-eyes-server 目录执行 npm install。
-#运行 node index.js 启动记忆中心。
-#注意：若在校外访问北大内网服务器，需挂载 AnyConnect VPN。
-🚀 启动与使用
-开发者模式
+🌸 Uniflourish | v1.5.3
+Uniflourish 是一款基于 Tauri v2 + React 构建的下一代全能多模态 AI 桌面助理。它不仅支持全球主流的所有 AI 模型，还拥有智能进化的“长期记忆融合”引擎、无限容量的本地 IndexedDB 存储以及企业级的多级管理员审计系统。
+✨ 正式版 v1.5.3 核心特性
+🤖 全模型宇宙：原生支持 ChatGPT, Claude, Gemini, DeepSeek, 豆包 (Doubao), Kimi，并支持用户自定义添加任意模型 ID。
+🧠 进化版长期记忆 (LTM)：AI 自动提炼对话事实，并与旧记忆进行智能去重与融合，形成不断生长且不臃肿的个性化档案。
+📑 智能会话管理：自动根据首轮对话生成简洁标题，侧边栏支持搜索与快速管理。
+📦 无限本地存储：弃用 localStorage，采用底层 IndexedDB 引擎，支持存储数万条带“深度思考”的长对话而不白屏。
+⌨️ 极客交互体验：Cmd/Ctrl + Enter 发送，原生回车换行；Mac 风格浅色代码卡片，支持吸顶跟随复制按钮。
+🛠️ 技术栈
+客户端 (Desktop)
+内核: Tauri v2 (Rust)
+前端: React 18 + TypeScript + Tailwind CSS
+渲染: React-Markdown + KaTeX (数学公式) + Prism (代码高亮)
+存储: IndexedDB (无限容量引擎)
+后端 (Server)
+环境: Node.js + Express
+数据库: MongoDB 7.0 (存储用户、同步数据、审计日志)
+内网穿透: cpolar (穿透地址: https://dc90b03.r8.cpolar.top)
+进程管理: PM2 (永续后台运行)
+🚀 快速开始
+1. 基础环境
+安装 Node.js (v20+)
+安装 Rust (Tauri 编译需要)
+2. 初始化与启动
 code
 Bash
-     npm run tauri dev
-#打包为正式软件
-#code
-#Bash
-n#pm run tauri build
+# 克隆仓库
+git clone https://github.com/lfc070213/uniflourish.git
+cd uniflourish
+
+# 安装依赖
+npm install
+
+# 启动开发者模式
+npm run tauri dev
+
+# 打包正式版
+npm run tauri build
+🛠️ 后端服务管理 (小贴士)
+以后如果你想在服务器（Ubuntu）上查看或操作后端服务，可以用这些命令：
+查看运行状态：
+code
+Bash
+pm2 list
+查看实时日志（排查报错神器）：
+code
+Bash
+pm2 logs uniflourish-server
+重启服务（当你修改了服务器端的 index.js 后）：
+code
+Bash
+pm2 restart uniflourish-server
+停止服务：
+code
+Bash
+pm2 stop uniflourish-server
 📅 版本记录
-v1.4.1: 更新了readme文件
-v1.4.0: 实现 API Key 云同步，修复 Mac 登出弹窗失效，彻底对齐 UI。
-v1.3.0: 引入图片压缩算法，解决大图崩溃问题。
-v1.2.0: 上线长期记忆提炼与多会话管理。
-v1.1.0: 接入 Ubuntu 后端实现云同步。
+v1.5.3: 项目更名为 Uniflourish；cpolar 穿透地址更新；重写长期记忆融合去重机制。
+v1.5.2: 上线 AI 自动标题生成；实现退出登录后“物理级”销毁本地所有配置与缓存。
+v1.5.1: 接入 6+ AI 供应商；上线用户自定义模型 ID 功能；修复 Claude 多模态类型报错。
+v1.5.0: 实现高级/低级管理员分级制度；上线管理员操作审计日志功能。
+v1.4.0: 引入 IndexedDB 引擎，彻底解决大长文本导致的白屏崩溃。
+🚀 Git 协同工作流
+上传代码 (Push)：
+code
+Bash
+git add .
+git commit -m "本次改动的描述"
+git push origin main
+下载/更新代码 (Pull)：
+code
+Bash
+git pull origin main
+版本标签 (Tag)：
+code
+Bash
+git tag -a v1.5.3 -m "stable release v1.5.3"
+git push origin v1.5.3
 📄 开源协议
 MIT License
-code
-Code
----
-下面的仅我个人学习使用，不必理会
-
 
 
 
