@@ -21,8 +21,7 @@ const MODELS = [
 const STORAGE_KEY = "you_are_my_eyes_v1.3.1_stable";
 //const SERVER_URL = "http://10.129.243.155:3000"; 
 // 替换为你的 cpolar 公网地址
-const SERVER_URL = "https://71f55f32.r8.cpolar.top";
-
+const SERVER_URL = "https://79866b64.r8.cpolar.top";
 // --- 🛠️ 补全函数：解决 DeepSeek 乱码的核心 ---
 const standardizeContent = (text: string) => {
   if (!text) return "";
