@@ -475,7 +475,7 @@ AI回答：${aiText.slice(0, 300)}...
     setNewModelForm({ id: "", name: "", provider: "openai" });
   };
 
-  const handleSend = async () => {
+const handleSend = async () => {
     const activeModel = ALL_MODELS.find(m => m.id === selectedModel.id) || ALL_MODELS[0];
     const provider = activeModel.provider;
 
@@ -492,11 +492,20 @@ AI回答：${aiText.slice(0, 300)}...
 
     const curAtts = [...attachments];
     const text = inputText.trim() || "分析内容。";
-    const userMsg: Message = { id: Date.now().toString(), role: "user", content: text, previewImages: curAtts.filter(a => a.type === 'image').map(a => a.displayUrl) };
     
+    let finalUserText = text;
+    const pdfAtts = curAtts.filter(a => a.type === 'pdf');
+    if (pdfAtts.length > 0) {
+      finalUserText += "\n\n[以下是附带的文档内容]：\n" + pdfAtts.map(p => `--- ${p.name} ---\n${p.extractedText}`).join("\n\n");
+    }
+
+    const userMsg: Message = { id: Date.now().toString(), role: "user", content: finalUserText, previewImages: curAtts.filter(a => a.type === 'image').map(a => a.displayUrl) };
     const isFirstMessage = sessions.find(s => s.id === currentSessionId)?.messages.length === 0;
 
-    setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, userMsg] } : s));
+    // 💡 提前放置一个空的 AI 回复气泡，用于 59 秒定时刷新
+    const assistantMsgId = (Date.now() + 1).toString();
+
+    setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, userMsg, { id: assistantMsgId, role: "assistant", content: "", reasoning: "", modelName: activeModel.name }] } : s));
     setInputText(""); setAttachments([]); setIsLoading(true);
 
     const sys = `你是 Uniflourish 的全能AI助理。对话背景：\n${longTermMemory}`;
@@ -504,43 +513,95 @@ AI回答：${aiText.slice(0, 300)}...
       let rText = ""; let rReason = "";
 
       if (provider === "google") {
-        const payload = [{ role: "user", parts: [{ text: sys }] }, ...sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })), { role: "user", parts: [{ text }, ...curAtts.filter(a => a.type === 'image').map(a => ({ inline_data: { mime_type: "image/jpeg", data: a.apiBase64 } }))] }];
+        const payload = [{ role: "user", parts: [{ text: sys }] }, ...sessions.find(s => s.id === currentSessionId)!.messages.filter(m => m.id !== assistantMsgId).map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })), { role: "user", parts: [{ text: finalUserText }, ...curAtts.filter(a => a.type === 'image').map(a => ({ inline_data: { mime_type: "image/jpeg", data: a.apiBase64 } }))] }];
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${activeModel.id}:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: payload }) });
         const d = await res.json(); if (d.error) throw new Error(d.error.message); rText = d.candidates[0].content.parts[0].text;
+        
+        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: s.messages.map(m => m.id === assistantMsgId ? { ...m, content: rText } : m) } : s));
       } else if (provider === "claude") {
-        const messages: any[] = sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role, content: m.content }));
+        const messages: any[] = sessions.find(s => s.id === currentSessionId)!.messages.filter(m => m.id !== assistantMsgId).map(m => ({ role: m.role, content: m.content }));
         const userContent: any[] =[];
         curAtts.filter(a => a.type === 'image').forEach(a => userContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: a.apiBase64 } }));
-        userContent.push({ type: "text", text: text });
+        userContent.push({ type: "text", text: finalUserText });
         messages.push({ role: "user", content: userContent });
         const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerously-allow-browser": "true", "content-type": "application/json" }, body: JSON.stringify({ model: activeModel.id, messages: messages, system: sys, max_tokens: 4096 }) });
         const d = await res.json(); if (d.error) throw new Error(d.error.message); rText = d.content[0].text;
+        
+        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: s.messages.map(m => m.id === assistantMsgId ? { ...m, content: rText } : m) } : s));
       } else {
+        // 🚀 OpenAI 兼容层（DeepSeek / 豆包 等）
         let url = "https://api.openai.com/v1/chat/completions";
         if (provider === 'deepseek') url = "https://api.deepseek.com/chat/completions";
         else if (provider === 'doubao') url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
         else if (provider === 'kimi') url = "https://api.moonshot.cn/v1/chat/completions";
 
-        const dsMsgs: any[] = [{ role: "system", content: sys }, ...sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role, content: m.content }))];
-        if (provider === 'openai' && curAtts.filter(a => a.type === 'image').length > 0) {
-          dsMsgs.push({ role: "user", content: [{ type: "text", text: text }, ...curAtts.filter(a => a.type === 'image').map(a => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${a.apiBase64}` } }))] });
+        const dsMsgs: any[] = [{ role: "system", content: sys }, ...sessions.find(s => s.id === currentSessionId)!.messages.filter(m => m.id !== assistantMsgId).map(m => ({ role: m.role, content: m.content }))];
+        
+        if (curAtts.filter(a => a.type === 'image').length > 0) {
+          dsMsgs.push({ role: "user", content: [{ type: "text", text: finalUserText }, ...curAtts.filter(a => a.type === 'image').map(a => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${a.apiBase64}` } }))] });
         } else {
-          dsMsgs.push({ role: "user", content: curAtts.length > 0 ? curAtts.map(a => `[附件: ${a.name}]`).join("\n") + "\n" + text : text });
+          dsMsgs.push({ role: "user", content: finalUserText });
         }
 
-        const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` }, body: JSON.stringify({ model: activeModel.id, messages: dsMsgs }) });
-        const d = await res.json(); if (d.error) throw new Error(d.error.message);
-        rText = d.choices[0].message.content; rReason = d.choices[0].message.reasoning_content || "";
+        // 💡 隐式流式网络连接：底层开启流式接收数据以防断线
+        const res = await fetch(url, { 
+          method: "POST", 
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` }, 
+          body: JSON.stringify({ model: activeModel.id, messages: dsMsgs, stream: true }) 
+        });
+        
+        if (!res.ok) { const err = await res.json(); throw new Error(err.error?.message || "网络请求失败"); }
+        
+        const reader = res.body?.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let lastUiUpdateTime = Date.now();
+
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read(); // 网络底层的包源源不断，确保连接不被系统杀死
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ""; 
+
+            for (const line of lines) {
+              if (line.trim().startsWith('data: ') && !line.includes('[DONE]')) {
+                try {
+                  const data = JSON.parse(line.trim().slice(6));
+                  const delta = data.choices[0].delta;
+                  if (delta.reasoning_content) rReason += delta.reasoning_content;
+                  if (delta.content) rText += delta.content;
+                } catch(e) {}
+              }
+            }
+
+            // ⏱️ 59秒大块刷新魔法：死死按住数据不往屏幕上画，憋满 59 秒才抛出一次
+            const now = Date.now();
+            if (now - lastUiUpdateTime > 59000) {
+              setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: s.messages.map(m => m.id === assistantMsgId ? { ...m, content: rText, reasoning: rReason } : m) } : s));
+              lastUiUpdateTime = now;
+              scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+            }
+          }
+        }
+        
+        // 当模型完全想清楚并结束后，渲染最终的全部文本
+        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: s.messages.map(m => m.id === assistantMsgId ? { ...m, content: rText, reasoning: rReason } : m) } : s));
       }
 
-      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, { id: Date.now().toString(), role: "assistant", content: rText, reasoning: rReason, modelName: activeModel.name }] } : s));
-      
       if (isFirstMessage) generateAutoTitle(currentSessionId, text, provider, activeModel.id, apiKey);
       triggerBrainUpdate(text, rText, provider, activeModel.id, apiKey);
 
-    } catch (err: any) { showToast("API 报错: " + err.message, "error"); } finally { setIsLoading(false); scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }
+    } catch (err: any) { 
+      // 若出错，撤回占位的空消息气泡
+      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: s.messages.filter(m => m.id !== assistantMsgId) } : s));
+      showToast("API 报错: " + err.message, "error"); 
+    } finally { 
+      setIsLoading(false); 
+      scrollRef.current?.scrollIntoView({ behavior: "smooth" }); 
+    }
   };
-
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ||[]);
     for (const f of files) {
@@ -550,8 +611,26 @@ AI回答：${aiText.slice(0, 300)}...
         reader.onload = async (ev) => {
           const raw = ev.target?.result as string; let disp = ""; let api = "";
           if (f.type.startsWith('image/')) { const comp = await smartCompress(f); disp = comp.display; api = comp.api; }
-          else { api = raw.split(",")[1]; }
-          setAttachments(p =>[...p, { id: Math.random().toString(36).substr(2, 9), type: f.type.startsWith('image/') ? 'image' : 'pdf', name: f.name, displayUrl: disp, apiBase64: api, preview: URL.createObjectURL(f), file: f, mimeType: f.type }]);
+          // 替换前：
+          // else { api = raw.split(",")[1]; }
+          // setAttachments(p =>[...p, { id: Math.random().toString(36).substr(2, 9), type: f.type.startsWith('image/') ? 'image' : 'pdf', name: f.name, displayUrl: disp, apiBase64: api, preview: URL.createObjectURL(f), file: f, mimeType: f.type }]);
+
+          // 替换为（新增了 extracted 变量和 pdf.js 解析）：
+          let extracted = "";
+          if (f.type.startsWith('image/')) { 
+            const comp = await smartCompress(f); disp = comp.display; api = comp.api; 
+          } else { 
+            api = raw.split(",")[1]; 
+            try {
+              const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await f.arrayBuffer()), useWorkerFetch: false }).promise;
+              for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const content = await page.getTextContent();
+                extracted += content.items.map((it: any) => (it as any).str).join(" ") + "\n";
+              }
+            } catch (e) { extracted = "[PDF 解析提取失败]"; }
+          }
+          setAttachments(p =>[...p, { id: Math.random().toString(36).substr(2, 9), type: f.type.startsWith('image/') ? 'image' : 'pdf', name: f.name, displayUrl: disp, apiBase64: api, preview: URL.createObjectURL(f), extractedText: extracted, file: f, mimeType: f.type }]);
           res();
         }; reader.readAsDataURL(f);
       });
