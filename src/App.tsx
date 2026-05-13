@@ -183,6 +183,8 @@ export default function App() {
 
   const [showReasoning, setShowReasoning] = useState(localStorage.getItem("uni_show_reasoning") !== "false");
   const [autoUpdateBrain, setAutoUpdateBrain] = useState(localStorage.getItem("uni_auto_brain") !== "false");
+  // 👇 新增这一行
+  const [deepseekVision, setDeepseekVision] = useState(localStorage.getItem("uni_deepseek_vision") === "true");
   const [showKeys, setShowKeys] = useState(false);
 
   const [token, setToken] = useState(localStorage.getItem("user_token") || "");
@@ -393,7 +395,7 @@ AI回答：${aiText.slice(0, 300)}...
     setCurrentSessionId(blankId);['user_token', 'saved_username', 'is_admin', 'admin_role', 
      'uni_gemini_key', 'uni_deepseek_key', 'uni_doubao_key', 'uni_kimi_key', 
      'uni_claude_key', 'uni_openai_key', 'uni_custom_models', 'uni_show_reasoning',
-     'uni_auto_brain', 'uni_brain_memory'].forEach(k => localStorage.removeItem(k));
+     'uni_auto_brain', 'uni_brain_memory', 'uni_deepseek_vision'].forEach(k => localStorage.removeItem(k));
     
     localStorage.removeItem(STORAGE_KEY);
 
@@ -535,10 +537,17 @@ const handleSend = async () => {
         else if (provider === 'doubao') url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
         else if (provider === 'kimi') url = "https://api.moonshot.cn/v1/chat/completions";
 
-        const dsMsgs: any[] = [{ role: "system", content: sys }, ...sessions.find(s => s.id === currentSessionId)!.messages.filter(m => m.id !== assistantMsgId).map(m => ({ role: m.role, content: m.content }))];
+       const dsMsgs: any[] = [{ role: "system", content: sys }, ...sessions.find(s => s.id === currentSessionId)!.messages.filter(m => m.id !== assistantMsgId).map(m => ({ role: m.role, content: m.content }))];
         
+        // 🚀 核心修复：只有真正的 OpenAI 渠道才发送多模态数组，DeepSeek 等纯文本模型自动降级拦截
         if (curAtts.filter(a => a.type === 'image').length > 0) {
-          dsMsgs.push({ role: "user", content: [{ type: "text", text: finalUserText }, ...curAtts.filter(a => a.type === 'image').map(a => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${a.apiBase64}` } }))] });
+          if (provider === 'openai') {
+            dsMsgs.push({ role: "user", content: [{ type: "text", text: finalUserText }, ...curAtts.filter(a => a.type === 'image').map(a => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${a.apiBase64}` } }))] });
+          } else {
+            // 给 DeepSeek 等不支持视觉的模型发一个文字占位，防止 API 崩溃
+            const imgNames = curAtts.filter(a => a.type === 'image').map(a => `[系统提示：用户发送了一张图片文件 "${a.name}"，但当前 DeepSeek 暂不支持视觉解析功能。]`).join('\n');
+            dsMsgs.push({ role: "user", content: imgNames + '\n\n' + finalUserText });
+          }
         } else {
           dsMsgs.push({ role: "user", content: finalUserText });
         }
@@ -1123,6 +1132,13 @@ const handleSend = async () => {
                   <div className="text-sm font-bold flex items-center gap-2">{autoUpdateBrain ? <Zap size={16} className="text-amber-500" /> : <ZapOff size={16} className="text-slate-400" />} 自动提炼长期记忆</div>
                   <button onClick={() => setAutoUpdateBrain(!autoUpdateBrain)} className={`w-10 h-5 rounded-full relative transition-colors ${autoUpdateBrain ? 'bg-amber-500' : 'bg-slate-300'}`}><div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${autoUpdateBrain ? 'left-5' : 'left-1'}`} /></button>
                 </div>
+                
+                {/* 👇 新增下面这整个 div 块 */}
+                <div className="flex items-center justify-between p-3 bg-slate-100 rounded-2xl">
+                  <div className="text-sm font-bold flex items-center gap-2"><Eye size={16} className="text-purple-500" /> 启用 DeepSeek 视觉解析 (未来支持时开启)</div>
+                  <button onClick={() => setDeepseekVision(!deepseekVision)} className={`w-10 h-5 rounded-full relative transition-colors ${deepseekVision ? 'bg-purple-500' : 'bg-slate-300'}`}><div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${deepseekVision ? 'left-5' : 'left-1'}`} /></button>
+                </div>
+                
               </div>
             </div>
 
@@ -1138,6 +1154,7 @@ const handleSend = async () => {
                 localStorage.setItem("uni_custom_models", JSON.stringify(customModels));
                 localStorage.setItem("uni_show_reasoning", showReasoning.toString());
                 localStorage.setItem("uni_auto_brain", autoUpdateBrain.toString());
+                localStorage.setItem("uni_deepseek_vision", deepseekVision.toString());
                 setIsSettingsOpen(false); showToast("配置已保存");
               }} className="flex-1 bg-black text-white p-3 rounded-xl font-bold shadow-lg text-sm flex items-center justify-center gap-2 hover:bg-slate-800 transition-colors"><Save size={18} /> 保存配置</button>
             </div>
