@@ -1,0 +1,47 @@
+name: 'Uniflourish 自动化云端打包'
+
+# 触发条件：当你在 GitHub 网页上点击“Run workflow”时手动触发
+on:
+  workflow_dispatch:
+
+jobs:
+  build-tauri:
+    # 授权 GitHub Token 允许往仓库里上传文件发布 Release
+    permissions:
+      contents: write
+
+    # 策略矩阵：告诉云端，同时给我开一台最新版的 Mac 和一台 Windows 电脑！
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: 1. 拉取最新代码
+        uses: actions/checkout@v4
+
+      - name: 2. 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 3. 安装 Rust 环境
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 4. 安装前端依赖
+        run: npm install
+
+      - name: 5. 执行 Tauri 自动化打包并发布
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # 打包成功后，会自动在仓库的 Releases 页面生成对应的下载链接
+          tagName: v1.5.3
+          releaseName: 'Uniflourish v1.5.3 正式版'
+          releaseBody: |
+            🚀 由 GitHub Actions 云端服务器全自动编译生成。
+            包含 Mac (dmg) 和 Windows (msi/exe) 平台的安装包。
+          releaseDraft: false
+          prerelease: false
