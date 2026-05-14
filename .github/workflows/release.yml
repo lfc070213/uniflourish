@@ -10,7 +10,6 @@ jobs:
     permissions:
       contents: write
     
-    # 💡 消除警告：强制全局使用 Node 24
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -26,7 +25,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24' # 💡 升级到最新版
+          node-version: '24'
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -41,28 +40,38 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      # 🔐 核心：还原签名文件
+      # 🔐 1. 解码密钥
       - name: Decode Keystore
-        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > src-tauri/uniflourish.keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > ${{ github.workspace }}/uniflourish.keystore
 
-      # 📦 正式编译 (增加 --universal 确保一个包走天下)
-# ✅ 修复后的编译命令：在 --apk 后面加一个空格，再加 --，再加 --universal
-# ✅ 修复后的编译命令：删掉所有多余的 --universal
+      # 🔍 2. 【核心审计步】验证文件是否真的存在
+      - name: Check Environment Paths
+        run: |
+          echo "--- 当前工作根目录: ${{ github.workspace }} ---"
+          ls -la ${{ github.workspace }}/uniflourish.keystore
+          if [ -f "${{ github.workspace }}/uniflourish.keystore" ]; then
+            echo "✅ 确认：uniflourish.keystore 文件已成功还原且存在。"
+          else
+            echo "❌ 错误：文件未找到！"
+            exit 1
+          fi
+
+      # 📦 3. 正式编译
       - name: Build Android
         run: npx tauri android build --apk
         env:
-          # 确保路径指向根目录下的密钥文件
-          TAURI_ANDROID_KEYSTORE: "uniflourish.keystore"
+          # 使用绝对路径传递给环境变量
+          TAURI_ANDROID_KEYSTORE: ${{ github.workspace }}/uniflourish.keystore
           TAURI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           TAURI_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           TAURI_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
-      # 发布步骤：保持通配符抓取
       - name: Release App
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
             src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
+            !src-tauri/gen/android/app/build/outputs/apk/**/release/*-unsigned.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
