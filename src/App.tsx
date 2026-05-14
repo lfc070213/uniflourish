@@ -1,4 +1,4 @@
-// 项目名: Uniflourish | 版本号: v1.5.3
+// 项目名: Uniflourish | 版本号: v1.5.4 (移动端适配与大文本模式)
 import "./App.css";
 import "katex/dist/katex.min.css";
 import { useState, useRef, useEffect } from "react";
@@ -6,7 +6,8 @@ import {
   Send, Paperclip, Plus, MessageSquare, Loader2, ChevronDown, X, FileText,
   Trash2, Settings, Eye, EyeOff, Save, Clock, BrainCircuit, Brain, Edit3,
   Check, Zap, ZapOff, User as UserIcon, LogOut, Cloud, AlertTriangle, ShieldAlert,
-  Key, Trash, Database, Search, ArrowLeft, Copy, Users, Shield, Activity, Unlock
+  Key, Trash, Database, Search, ArrowLeft, Copy, Users, Shield, Activity, Unlock,
+  Maximize, Menu // 💡 新增放大与移动端菜单图标
 } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
 import ReactMarkdown from "react-markdown";
@@ -15,7 +16,7 @@ import rehypeKatex from "rehype-katex";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js`;
 
-const VERSION = "v1.5.3";
+const VERSION = "v1.5.4";
 
 const MODELS =[
   { id: "gemini-3.1-flash-lite", name: "gemini-3.1-flash-lite", provider: "google" },
@@ -26,9 +27,8 @@ const MODELS =[
 ];
 
 const STORAGE_KEY = "uniflourish_v1.5.3_stable";
-
-// ✅ 已更新为全新的 cpolar URL
-const SERVER_URL = "https://4d767974.r8.cpolar.top";
+// 在 App.tsx 中修改
+const SERVER_URL = "https://yc.tailb5e8d2.ts.net";
 
 const standardizeContent = (text: string) => {
   if (!text) return "";
@@ -183,7 +183,6 @@ export default function App() {
 
   const [showReasoning, setShowReasoning] = useState(localStorage.getItem("uni_show_reasoning") !== "false");
   const [autoUpdateBrain, setAutoUpdateBrain] = useState(localStorage.getItem("uni_auto_brain") !== "false");
-  // 👇 新增这一行
   const [deepseekVision, setDeepseekVision] = useState(localStorage.getItem("uni_deepseek_vision") === "true");
   const [showKeys, setShowKeys] = useState(false);
 
@@ -202,6 +201,10 @@ export default function App() {
 
   const [isSyncing, setIsSyncing] = useState(false);
   const isInitialLoad = useRef(true);
+
+  // 💡 状态管理：移动端侧边栏与沉浸式文本框
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isInputExpanded, setIsInputExpanded] = useState(false);
 
   const ALL_MODELS = [...MODELS, ...customModels];
   const [selectedModel, setSelectedModel] = useState(ALL_MODELS[0]);
@@ -309,10 +312,10 @@ ${longTermMemory}
 用户：${userText}
 AI回答：${aiText.slice(0, 300)}...
 
-核心规则与指令（必须绝对遵守）：
-1. 检查最新对话是否有值得长期记录的用户习惯、偏好或事实。如果完全没有，你必须只输出：NONE
-2. 如果有新信息，请把新信息与【当前记忆库】进行合并。删除陈旧、重复或矛盾的条目，整理成一份全新的长期记忆文本。
-3. 你的输出将作为机器代码直接覆盖原记忆库！所以严禁输出如“好的”、“已更新”、“总结如下”等聊天废话。直接输出整理后的纯记忆内容即可！`;
+核心规则与指令：
+1. 检查对话是否有值得记录的事实。如果没有新信息，必须且只输出：NONE
+2. 如果有新信息，请把新信息与【当前记忆库】进行合并。删除重复条目，整理成一份全新的长期记忆文本。
+3. 严禁输出如“好的”、“已更新”等解释性废话。只输出整理后的纯记忆内容！`;
 
     try {
       let newMemory = await fetchTextLLM(provider, modelId, apiKey, prompt);
@@ -477,7 +480,7 @@ AI回答：${aiText.slice(0, 300)}...
     setNewModelForm({ id: "", name: "", provider: "openai" });
   };
 
-const handleSend = async () => {
+  const handleSend = async () => {
     const activeModel = ALL_MODELS.find(m => m.id === selectedModel.id) || ALL_MODELS[0];
     const provider = activeModel.provider;
 
@@ -504,10 +507,7 @@ const handleSend = async () => {
     const userMsg: Message = { id: Date.now().toString(), role: "user", content: finalUserText, previewImages: curAtts.filter(a => a.type === 'image').map(a => a.displayUrl) };
     const isFirstMessage = sessions.find(s => s.id === currentSessionId)?.messages.length === 0;
 
-    // 💡 提前放置一个空的 AI 回复气泡，用于 59 秒定时刷新
-    const assistantMsgId = (Date.now() + 1).toString();
-
-    setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, userMsg, { id: assistantMsgId, role: "assistant", content: "", reasoning: "", modelName: activeModel.name }] } : s));
+    setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, userMsg] } : s));
     setInputText(""); setAttachments([]); setIsLoading(true);
 
     const sys = `你是 Uniflourish 的全能AI助理。对话背景：\n${longTermMemory}`;
@@ -515,102 +515,52 @@ const handleSend = async () => {
       let rText = ""; let rReason = "";
 
       if (provider === "google") {
-        const payload = [{ role: "user", parts: [{ text: sys }] }, ...sessions.find(s => s.id === currentSessionId)!.messages.filter(m => m.id !== assistantMsgId).map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })), { role: "user", parts: [{ text: finalUserText }, ...curAtts.filter(a => a.type === 'image').map(a => ({ inline_data: { mime_type: "image/jpeg", data: a.apiBase64 } }))] }];
+        const payload = [{ role: "user", parts: [{ text: sys }] }, ...sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })), { role: "user", parts: [{ text: finalUserText }, ...curAtts.filter(a => a.type === 'image').map(a => ({ inline_data: { mime_type: "image/jpeg", data: a.apiBase64 } }))] }];
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${activeModel.id}:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: payload }) });
         const d = await res.json(); if (d.error) throw new Error(d.error.message); rText = d.candidates[0].content.parts[0].text;
-        
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: s.messages.map(m => m.id === assistantMsgId ? { ...m, content: rText } : m) } : s));
       } else if (provider === "claude") {
-        const messages: any[] = sessions.find(s => s.id === currentSessionId)!.messages.filter(m => m.id !== assistantMsgId).map(m => ({ role: m.role, content: m.content }));
+        const messages: any[] = sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role, content: m.content }));
         const userContent: any[] =[];
         curAtts.filter(a => a.type === 'image').forEach(a => userContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: a.apiBase64 } }));
         userContent.push({ type: "text", text: finalUserText });
         messages.push({ role: "user", content: userContent });
         const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerously-allow-browser": "true", "content-type": "application/json" }, body: JSON.stringify({ model: activeModel.id, messages: messages, system: sys, max_tokens: 4096 }) });
         const d = await res.json(); if (d.error) throw new Error(d.error.message); rText = d.content[0].text;
-        
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: s.messages.map(m => m.id === assistantMsgId ? { ...m, content: rText } : m) } : s));
       } else {
-        // 🚀 OpenAI 兼容层（DeepSeek / 豆包 等）
         let url = "https://api.openai.com/v1/chat/completions";
         if (provider === 'deepseek') url = "https://api.deepseek.com/chat/completions";
         else if (provider === 'doubao') url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
         else if (provider === 'kimi') url = "https://api.moonshot.cn/v1/chat/completions";
 
-       const dsMsgs: any[] = [{ role: "system", content: sys }, ...sessions.find(s => s.id === currentSessionId)!.messages.filter(m => m.id !== assistantMsgId).map(m => ({ role: m.role, content: m.content }))];
+        const dsMsgs: any[] = [{ role: "system", content: sys }, ...sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role, content: m.content }))];
         
-        // 🚀 核心修复：只有真正的 OpenAI 渠道才发送多模态数组，DeepSeek 等纯文本模型自动降级拦截
+        // 🚀 核心修复：解除 provider === 'openai' 限制！所有兼容大模型均可支持视觉数组格式发送
+        const isVisionEnabled = provider !== 'deepseek' || (provider === 'deepseek' && deepseekVision);
+        
         if (curAtts.filter(a => a.type === 'image').length > 0) {
-          if (provider === 'openai') {
+          if (isVisionEnabled) {
             dsMsgs.push({ role: "user", content: [{ type: "text", text: finalUserText }, ...curAtts.filter(a => a.type === 'image').map(a => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${a.apiBase64}` } }))] });
           } else {
-            // 给 DeepSeek 等不支持视觉的模型发一个文字占位，防止 API 崩溃
-            const imgNames = curAtts.filter(a => a.type === 'image').map(a => `[系统提示：用户发送了一张图片文件 "${a.name}"，但当前 DeepSeek 暂不支持视觉解析功能。]`).join('\n');
+            const imgNames = curAtts.filter(a => a.type === 'image').map(a => `[系统提示：用户发送了一张图片文件 "${a.name}"，但当前大模型暂未开启或不支持视觉解析功能。]`).join('\n');
             dsMsgs.push({ role: "user", content: imgNames + '\n\n' + finalUserText });
           }
         } else {
           dsMsgs.push({ role: "user", content: finalUserText });
         }
 
-        // 💡 隐式流式网络连接：底层开启流式接收数据以防断线
-        const res = await fetch(url, { 
-          method: "POST", 
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` }, 
-          body: JSON.stringify({ model: activeModel.id, messages: dsMsgs, stream: true }) 
-        });
-        
-        if (!res.ok) { const err = await res.json(); throw new Error(err.error?.message || "网络请求失败"); }
-        
-        const reader = res.body?.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let lastUiUpdateTime = Date.now();
-
-        if (reader) {
-          while (true) {
-            const { done, value } = await reader.read(); // 网络底层的包源源不断，确保连接不被系统杀死
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || ""; 
-
-            for (const line of lines) {
-              if (line.trim().startsWith('data: ') && !line.includes('[DONE]')) {
-                try {
-                  const data = JSON.parse(line.trim().slice(6));
-                  const delta = data.choices[0].delta;
-                  if (delta.reasoning_content) rReason += delta.reasoning_content;
-                  if (delta.content) rText += delta.content;
-                } catch(e) {}
-              }
-            }
-
-            // ⏱️ 59秒大块刷新魔法：死死按住数据不往屏幕上画，憋满 59 秒才抛出一次
-            const now = Date.now();
-            if (now - lastUiUpdateTime > 59000) {
-              setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: s.messages.map(m => m.id === assistantMsgId ? { ...m, content: rText, reasoning: rReason } : m) } : s));
-              lastUiUpdateTime = now;
-              scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-            }
-          }
-        }
-        
-        // 当模型完全想清楚并结束后，渲染最终的全部文本
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: s.messages.map(m => m.id === assistantMsgId ? { ...m, content: rText, reasoning: rReason } : m) } : s));
+        const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` }, body: JSON.stringify({ model: activeModel.id, messages: dsMsgs }) });
+        const d = await res.json(); if (d.error) throw new Error(d.error.message);
+        rText = d.choices[0].message.content; rReason = d.choices[0].message.reasoning_content || "";
       }
 
+      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, { id: Date.now().toString(), role: "assistant", content: rText, reasoning: rReason, modelName: activeModel.name }] } : s));
+      
       if (isFirstMessage) generateAutoTitle(currentSessionId, text, provider, activeModel.id, apiKey);
       triggerBrainUpdate(text, rText, provider, activeModel.id, apiKey);
 
-    } catch (err: any) { 
-      // 若出错，撤回占位的空消息气泡
-      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: s.messages.filter(m => m.id !== assistantMsgId) } : s));
-      showToast("API 报错: " + err.message, "error"); 
-    } finally { 
-      setIsLoading(false); 
-      scrollRef.current?.scrollIntoView({ behavior: "smooth" }); 
-    }
+    } catch (err: any) { showToast("API 报错: " + err.message, "error"); } finally { setIsLoading(false); scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }
   };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ||[]);
     for (const f of files) {
@@ -618,14 +568,7 @@ const handleSend = async () => {
       const reader = new FileReader();
       await new Promise<void>((res) => {
         reader.onload = async (ev) => {
-          const raw = ev.target?.result as string; let disp = ""; let api = "";
-          if (f.type.startsWith('image/')) { const comp = await smartCompress(f); disp = comp.display; api = comp.api; }
-          // 替换前：
-          // else { api = raw.split(",")[1]; }
-          // setAttachments(p =>[...p, { id: Math.random().toString(36).substr(2, 9), type: f.type.startsWith('image/') ? 'image' : 'pdf', name: f.name, displayUrl: disp, apiBase64: api, preview: URL.createObjectURL(f), file: f, mimeType: f.type }]);
-
-          // 替换为（新增了 extracted 变量和 pdf.js 解析）：
-          let extracted = "";
+          const raw = ev.target?.result as string; let disp = ""; let api = ""; let extracted = "";
           if (f.type.startsWith('image/')) { 
             const comp = await smartCompress(f); disp = comp.display; api = comp.api; 
           } else { 
@@ -651,13 +594,20 @@ const handleSend = async () => {
     const id = Date.now().toString();
     setSessions(p => [{ id, title: "新对话", messages: [], createdAt: Date.now() }, ...p]);
     setCurrentSessionId(id); setAttachments([]); setInputText("");
+    setIsSidebarOpen(false); // 移动端新建对话后自动收回侧边栏
   };
 
   if (!isDataLoaded) return <div className="h-screen w-screen flex items-center justify-center bg-white"><Loader2 className="animate-spin text-black" size={32} /></div>;
 
   return (
-    <div className="grid grid-cols-[256px_1fr] h-screen bg-white text-gray-900 font-sans overflow-hidden relative">
+    // 💡 适配移动端：修改为 flex 布局并处理响应式遮罩层
+    <div className="flex h-screen bg-white text-gray-900 font-sans overflow-hidden relative">
       
+      {/* 移动端侧边栏遮罩层 */}
+      {isSidebarOpen && (
+        <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setIsSidebarOpen(false)} />
+      )}
+
       {toast && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full shadow-2xl z-[300] animate-in slide-in-from-top-4 fade-in flex items-center gap-2 bg-black text-white">
           {toast.type === 'error' ? <AlertTriangle size={16} className="text-red-400" /> : <Check size={16} className="text-emerald-400" />}
@@ -689,6 +639,34 @@ const handleSend = async () => {
               <button onClick={() => setConfirmAction(null)} className="flex-1 bg-slate-100 p-3 rounded-xl font-bold hover:bg-slate-200 transition-colors">点错了</button>
               <button onClick={executeConfirmAction} className="flex-1 bg-red-600 text-white p-3 rounded-xl font-bold hover:bg-red-700 transition-colors">确定执行</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 沉浸式大文本编辑模式弹窗 */}
+      {isInputExpanded && (
+        <div className="fixed inset-0 bg-white/95 backdrop-blur-sm z-[150] flex flex-col p-4 md:p-12 animate-in fade-in zoom-in-95 duration-200">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="font-bold text-xl flex items-center gap-2 text-slate-800"><Maximize size={22} className="text-blue-500" /> 沉浸式编辑模式</h3>
+            <button onClick={() => setIsInputExpanded(false)} className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 transition-colors"><X size={24} /></button>
+          </div>
+          <textarea
+            autoFocus
+            className="flex-1 w-full bg-slate-50 border border-slate-200 rounded-3xl p-8 text-[16px] outline-none focus:ring-4 focus:ring-blue-100 resize-none custom-scrollbar shadow-inner leading-relaxed"
+            placeholder="在此输入超长文本，按 Cmd/Ctrl + Enter 快捷发送..."
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                setIsInputExpanded(false);
+                handleSend();
+              }
+            }}
+          />
+          <div className="mt-6 flex justify-end gap-4">
+            <button onClick={() => setIsInputExpanded(false)} className="px-8 py-3 bg-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-300 transition-colors">收起</button>
+            <button onClick={() => { setIsInputExpanded(false); handleSend(); }} disabled={isLoading} className="px-8 py-3 bg-black text-white font-bold rounded-2xl shadow-xl hover:bg-slate-800 transition-colors flex items-center gap-2 disabled:bg-slate-400"><Send size={20}/> 发送</button>
           </div>
         </div>
       )}
@@ -890,13 +868,13 @@ const handleSend = async () => {
         </div>
       ) : (
         <>
-          <aside className="flex flex-col h-full bg-slate-50 border-r border-gray-200 overflow-hidden">
+            <aside className={`fixed md:relative inset-y-0 left-0 z-50 bg-slate-50 border-r border-gray-200 flex flex-col transform transition-all duration-300 ease-in-out ${isSidebarOpen ? "w-64 translate-x-0" : "w-0 -translate-x-full md:translate-x-0 md:w-0 overflow-hidden"}`}>
             <div className="h-[71px] p-4 shrink-0 border-b border-gray-200 bg-slate-50 flex items-center justify-center">
               <button onClick={createNewSession} className="w-full bg-black text-white py-2 rounded-xl font-bold text-sm shadow-md transition-all active:scale-95 flex items-center justify-center gap-2"><Plus size={16} /> 新建对话</button>
             </div>
             <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1 custom-scrollbar">
               {sessions.map((s: ChatSession) => (
-                <div key={s.id} onClick={() => setCurrentSessionId(s.id)} className={`group flex items-center justify-between p-3 rounded-xl cursor-pointer ${currentSessionId === s.id ? 'bg-white shadow-sm ring-1 ring-black/5' : 'hover:bg-slate-200/50'}`}>
+                <div key={s.id} onClick={() => { setCurrentSessionId(s.id); setIsSidebarOpen(false); }} className={`group flex items-center justify-between p-3 rounded-xl cursor-pointer ${currentSessionId === s.id ? 'bg-white shadow-sm ring-1 ring-black/5' : 'hover:bg-slate-200/50'}`}>
                   <div className="flex items-center gap-3 overflow-hidden flex-1">
                     <MessageSquare size={16} className={currentSessionId === s.id ? 'text-black' : 'text-slate-400'} />
                     {editingSessionId === s.id ? (<input autoFocus className="bg-slate-100 text-sm w-full rounded outline-none" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} onBlur={() => { setSessions(p => p.map(ss => ss.id === s.id ? { ...ss, title: editTitle } : ss)); setEditingSessionId(null); }} onKeyDown={(e) => e.key === 'Enter' && (setSessions(p => p.map(ss => ss.id === s.id ? { ...ss, title: editTitle } : ss)), setEditingSessionId(null))} />) : (<span className={`text-sm truncate ${currentSessionId === s.id ? 'font-bold text-black' : 'text-slate-600'}`}>{s.title}</span>)}
@@ -928,14 +906,29 @@ const handleSend = async () => {
             </div>
           </aside>
           
-          <main className="flex flex-col h-full overflow-hidden bg-white">
-            <header className="h-[71px] flex items-center justify-center border-b border-gray-200 bg-white/90 backdrop-blur-md sticky top-0 z-10 shrink-0">
-              <div className="flex items-center gap-2 bg-slate-100 px-4 py-1.5 rounded-full border border-gray-200 shadow-sm">
-                <select value={selectedModel.id} onChange={(e) => { const found = ALL_MODELS.find(m => m.id === e.target.value); if (found) setSelectedModel(found); }} className="bg-transparent outline-none font-bold text-[11px] cursor-pointer appearance-none pr-4 text-gray-700 max-w-[200px] truncate">
-                  {ALL_MODELS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
-                <ChevronDown size={12} className="text-gray-400 shrink-0" />
+          <main className="flex-1 flex flex-col h-full min-w-0 bg-white">
+            <header className="h-[71px] flex items-center justify-between px-4 border-b border-gray-200 bg-white/90 backdrop-blur-md sticky top-0 z-10 shrink-0">
+              {/* 👇 这里的按钮现在在电脑和手机上都会显示 */}
+              <div className="flex items-center">
+                <button 
+                  onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
+                  className="p-2 -ml-2 text-slate-600 hover:text-black hover:bg-slate-100 rounded-lg transition-all"
+                  title={isSidebarOpen ? "收起侧边栏" : "展开侧边栏"}
+                >
+                  <Menu size={24} />
+                </button>
               </div>
+
+              <div className="flex-1 flex justify-center">
+                <div className="flex items-center gap-2 bg-slate-100 px-4 py-1.5 rounded-full border border-gray-200 shadow-sm">
+                  <select value={selectedModel.id} onChange={(e) => { const found = ALL_MODELS.find(m => m.id === e.target.value); if (found) setSelectedModel(found); }} className="bg-transparent outline-none font-bold text-[11px] cursor-pointer appearance-none pr-4 text-gray-700 max-w-[200px] truncate">
+                    {ALL_MODELS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                  <ChevronDown size={12} className="text-gray-400 shrink-0" />
+                </div>
+              </div>
+              {/* 为了保持标题居中，右侧放一个等宽占位符 */}
+              <div className="w-10"></div>
             </header>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar bg-white">
@@ -995,6 +988,7 @@ const handleSend = async () => {
                   <button onClick={() => fileInputRef.current?.click()} className="p-3 text-slate-400 hover:text-black transition-colors"><Paperclip size={22} /></button>
                   <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" multiple accept="image/*,application/pdf" />
                   <textarea rows={1} value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && (e.preventDefault(), handleSend())} placeholder="问我任何问题 (Cmd/Ctrl + Enter 发送)..." className="flex-1 bg-transparent outline-none py-3 px-1 resize-none max-h-60 text-[15px]" />
+                  <button onClick={() => setIsInputExpanded(true)} className="p-3 text-slate-400 hover:text-black transition-colors" title="全屏沉浸编辑"><Maximize size={22} /></button>
                   <button onClick={handleSend} disabled={isLoading} className="p-3.5 bg-black text-white rounded-full shadow-2xl disabled:bg-slate-300 transition-all active:scale-95"><Send size={22} /></button>
                 </div>
               </div>
@@ -1133,7 +1127,6 @@ const handleSend = async () => {
                   <button onClick={() => setAutoUpdateBrain(!autoUpdateBrain)} className={`w-10 h-5 rounded-full relative transition-colors ${autoUpdateBrain ? 'bg-amber-500' : 'bg-slate-300'}`}><div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${autoUpdateBrain ? 'left-5' : 'left-1'}`} /></button>
                 </div>
                 
-                {/* 👇 新增下面这整个 div 块 */}
                 <div className="flex items-center justify-between p-3 bg-slate-100 rounded-2xl">
                   <div className="text-sm font-bold flex items-center gap-2"><Eye size={16} className="text-purple-500" /> 启用 DeepSeek 视觉解析 (未来支持时开启)</div>
                   <button onClick={() => setDeepseekVision(!deepseekVision)} className={`w-10 h-5 rounded-full relative transition-colors ${deepseekVision ? 'bg-purple-500' : 'bg-slate-300'}`}><div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${deepseekVision ? 'left-5' : 'left-1'}`} /></button>
