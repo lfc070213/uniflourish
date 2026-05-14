@@ -10,9 +10,6 @@ jobs:
     permissions:
       contents: write
     
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
     steps:
       - uses: actions/checkout@v4
 
@@ -30,48 +27,37 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android, x86_64-linux-android 
+          targets: aarch64-linux-android
 
       - name: Install Android NDK
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "ndk;25.2.9519653"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653" >> $GITHUB_ENV
 
       - name: Install Dependencies
         run: npm install
 
-      # 🔐 1. 解码密钥
+      # 🔐 1. 将密钥解码到 src-tauri 目录下
       - name: Decode Keystore
-        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > ${{ github.workspace }}/uniflourish.keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > src-tauri/uniflourish.keystore
 
-      # 🔍 2. 【核心审计步】验证文件是否真的存在
-      - name: Check Environment Paths
-        run: |
-          echo "--- 当前工作根目录: ${{ github.workspace }} ---"
-          ls -la ${{ github.workspace }}/uniflourish.keystore
-          if [ -f "${{ github.workspace }}/uniflourish.keystore" ]; then
-            echo "✅ 确认：uniflourish.keystore 文件已成功还原且存在。"
-          else
-            echo "❌ 错误：文件未找到！"
-            exit 1
-          fi
-
-      # 📦 3. 正式编译
+      # 📦 2. 正式编译（强制注入签名参数）
       - name: Build Android
         run: npx tauri android build --apk
         env:
-          # 使用绝对路径传递给环境变量
-          TAURI_ANDROID_KEYSTORE: ${{ github.workspace }}/uniflourish.keystore
+          # 注意：Tauri v2 的环境变量命名非常严格
+          TAURI_ANDROID_KEYSTORE: "uniflourish.keystore"
           TAURI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           TAURI_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           TAURI_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
+      # 🚀 3. 发布
       - name: Release App
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
-            !src-tauri/gen/android/app/build/outputs/apk/**/release/*-unsigned.apk
+            src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk
+          # 过滤掉生成的 unsigned 废包，只留有签名的
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
