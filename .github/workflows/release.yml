@@ -46,20 +46,20 @@ jobs:
         run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > src-tauri/uniflourish.keystore
 
       # 📦 正式编译 (增加 --universal 确保一个包走天下)
+# ✅ 修复后的编译命令：在 --apk 后面加一个空格，再加 --，再加 --universal
       - name: Build Android
-        run: npx tauri android build --apk --universal
+        run: npx tauri android build --apk -- --universal
         env:
           TAURI_ANDROID_KEYSTORE: "uniflourish.keystore"
           TAURI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           TAURI_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           TAURI_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
-      # 🚀 发布到 GitHub Releases
+      # 这里的路径保持不变，它会自动抓取 universal 目录下的 apk
       - name: Release App
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          # 💡 这里用了通配符，会把生成的 universal 签名包抓取上来
           files: |
             src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
         env:
