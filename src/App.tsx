@@ -28,7 +28,7 @@ const MODELS =[
 const STORAGE_KEY = "uniflourish_v1.5.3_stable";
 
 // ✅ 已更新为全新的 cpolar URL
-const SERVER_URL = "https://dc90b03.r8.cpolar.top";
+const SERVER_URL = "https://4d767974.r8.cpolar.top";
 
 const standardizeContent = (text: string) => {
   if (!text) return "";
