@@ -1,13 +1,12 @@
 name: Mobile Release
-
 on:
   push:
     tags:
-      - 'v*' # 只要你推送以 v 开头的标签（如 v1.5.4），GitHub 就会开始打包
+      - 'v*' 
 
 jobs:
   build:
-    runs-on: macos-latest # 打包移动端必须用 macOS 虚拟机
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -25,26 +24,29 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+          targets: aarch64-linux-android, x86_64-linux-android # 安卓目标架构
+
+      - name: Install Android NDK
+        run: |
+          echo "y" | sudo sdkmanager "ndk;25.2.9519653"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653" >> $GITHUB_ENV
 
       - name: Install Dependencies
         run: npm install
 
-      # 核心：将刚才在 GitHub 填的密文还原成真实的密钥文件
+      # 解码密钥
       - name: Decode Keystore
         run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > src-tauri/uniflourish.keystore
 
-      # 正式开始编译 APK
+      # 正式编译
       - name: Build Android
         run: npx tauri android build
         env:
-          NDK_HOME: ${{ steps.setup-android.outputs.ndk-path }}
           TAURI_ANDROID_KEYSTORE: uniflourish.keystore
           TAURI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           TAURI_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           TAURI_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
-      # 自动把打包好的 APK 上传到 GitHub 的 Releases 页面
       - name: Release App
         uses: softprops/action-gh-release@v2
         with:
