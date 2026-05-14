@@ -1,47 +1,54 @@
-name: 'Uniflourish 自动化云端打包'
+name: Mobile Release
 
-# 触发条件：当你在 GitHub 网页上点击“Run workflow”时手动触发
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - 'v*' # 只要你推送以 v 开头的标签（如 v1.5.4），GitHub 就会开始打包
 
 jobs:
-  build-tauri:
-    # 授权 GitHub Token 允许往仓库里上传文件发布 Release
-    permissions:
-      contents: write
-
-    # 策略矩阵：告诉云端，同时给我开一台最新版的 Mac 和一台 Windows 电脑！
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [macos-latest, windows-latest]
-
-    runs-on: ${{ matrix.platform }}
+  build:
+    runs-on: macos-latest # 打包移动端必须用 macOS 虚拟机
     steps:
-      - name: 1. 拉取最新代码
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: 2. 安装 Node.js
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: 'lts/*'
 
-      - name: 3. 安装 Rust 环境
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
 
-      - name: 4. 安装前端依赖
+      - name: Install Dependencies
         run: npm install
 
-      - name: 5. 执行 Tauri 自动化打包并发布
-        uses: tauri-apps/tauri-action@v0
+      # 核心：将刚才在 GitHub 填的密文还原成真实的密钥文件
+      - name: Decode Keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > src-tauri/uniflourish.keystore
+
+      # 正式开始编译 APK
+      - name: Build Android
+        run: npx tauri android build
+        env:
+          NDK_HOME: ${{ steps.setup-android.outputs.ndk-path }}
+          TAURI_ANDROID_KEYSTORE: uniflourish.keystore
+          TAURI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          TAURI_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TAURI_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+      # 自动把打包好的 APK 上传到 GitHub 的 Releases 页面
+      - name: Release App
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/gen/android/app/build/outputs/apk/release/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          # 打包成功后，会自动在仓库的 Releases 页面生成对应的下载链接
-          tagName: v1.5.3
-          releaseName: 'Uniflourish v1.5.3 正式版'
-          releaseBody: |
-            🚀 由 GitHub Actions 云端服务器全自动编译生成。
-            包含 Mac (dmg) 和 Windows (msi/exe) 平台的安装包。
-          releaseDraft: false
-          prerelease: false
