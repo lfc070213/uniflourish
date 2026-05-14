@@ -47,15 +47,17 @@ jobs:
 
       # 📦 正式编译 (增加 --universal 确保一个包走天下)
 # ✅ 修复后的编译命令：在 --apk 后面加一个空格，再加 --，再加 --universal
+# ✅ 修复后的编译命令：删掉所有多余的 --universal
       - name: Build Android
-        run: npx tauri android build --apk -- --universal
+        run: npx tauri android build --apk
         env:
+          # 确保路径指向根目录下的密钥文件
           TAURI_ANDROID_KEYSTORE: "uniflourish.keystore"
           TAURI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           TAURI_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           TAURI_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
-      # 这里的路径保持不变，它会自动抓取 universal 目录下的 apk
+      # 发布步骤：保持通配符抓取
       - name: Release App
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
