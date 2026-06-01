@@ -16,14 +16,11 @@ import rehypeKatex from "rehype-katex";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js`;
 
-const VERSION = "v1.5.4";
+const VERSION = "v2.0.0";
 
-const MODELS =[
+const FALLBACK_MODELS = [
   { id: "gemini-3.1-flash-lite", name: "gemini-3.1-flash-lite", provider: "google" },
-  { id: "gemini-3-flash-preview", name: "gemini-3-flash-preview", provider: "google" },
-  { id: "gemini-3.1-pro-preview", name: "gemini-3.1-pro-preview", provider: "google" },
   { id: "deepseek-v4-flash", name: "deepseek-v4-flash", provider: "deepseek" },
-  { id: "deepseek-v4-pro", name: "deepseek-v4-pro", provider: "deepseek" },
 ];
 
 const STORAGE_KEY = "uniflourish_v1.5.3_stable";
@@ -160,6 +157,115 @@ const fetchTextLLM = async (provider: string, modelId: string, apiKey: string, p
   }
 };
 
+// ========== 流式输出引擎（Web 版 SSE, 每 5s 刷新 UI）==========
+
+const streamOpenAICompatible = async (
+  url: string, apiKey: string, body: any,
+  onToken: (token: string, reasoning?: string) => void,
+  onDone: () => void, onError: (err: Error) => void
+) => {
+  try {
+    const res = await fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify({ ...body, stream: true })
+    });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error?.message || `HTTP ${res.status}`); }
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n"); buf = lines.pop() || "";
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t.startsWith("data: ")) continue;
+        const ds = t.slice(6);
+        if (ds === "[DONE]") continue;
+        try {
+          const json = JSON.parse(ds);
+          const delta = json.choices?.[0]?.delta;
+          if (delta?.content) onToken(delta.content, delta.reasoning_content);
+        } catch {}
+      }
+    }
+    onDone();
+  } catch (e: any) { onError(e); }
+};
+
+const streamGoogle = async (
+  modelId: string, apiKey: string, contents: any[],
+  onToken: (token: string) => void,
+  onDone: () => void, onError: (err: Error) => void
+) => {
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:streamGenerateContent?alt=sse&key=${apiKey}`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents }) }
+    );
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error?.message || `HTTP ${res.status}`); }
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buf = ""; let prev = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n"); buf = lines.pop() || "";
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t.startsWith("data: ")) continue;
+        try {
+          const json = JSON.parse(t.slice(6));
+          const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          // Gemini streaming 返回全量文本，需要计算增量
+          if (text && text !== prev) {
+            const delta = text.slice(prev.length);
+            prev = text;
+            if (delta) onToken(delta);
+          }
+        } catch {}
+      }
+    }
+    onDone();
+  } catch (e: any) { onError(e); }
+};
+
+const streamClaude = async (
+  apiKey: string, body: any,
+  onToken: (token: string) => void,
+  onDone: () => void, onError: (err: Error) => void
+) => {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST", headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerously-allow-browser": "true", "content-type": "application/json" },
+      body: JSON.stringify({ ...body, stream: true })
+    });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error?.message || `HTTP ${res.status}`); }
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n"); buf = lines.pop() || "";
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t.startsWith("data: ")) continue;
+        try {
+          const json = JSON.parse(t.slice(6));
+          if (json.type === "content_block_delta" && json.delta?.text) {
+            onToken(json.delta.text);
+          }
+        } catch {}
+      }
+    }
+    onDone();
+  } catch (e: any) { onError(e); }
+};
+
 interface Attachment { id: string; type: 'image' | 'pdf'; name: string; mimeType: string; displayUrl: string; apiBase64: string; preview: string; extractedText?: string; file: File; }
 interface Message { id: string; role: "user" | "assistant"; content: string; reasoning?: string; modelName?: string; isError?: boolean; previewImages?: string[]; }
 interface ChatSession { id: string; title: string; messages: Message[]; createdAt: number; }
@@ -168,6 +274,8 @@ export default function App() {
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [sessionMessages, setSessionMessages] = useState<Record<string, Message[]>>({});
+  const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null);
 
   const [longTermMemory, setLongTermMemory] = useState(localStorage.getItem("uni_brain_memory") || "尚未记录。");
   const [geminiKey, setGeminiKey] = useState(localStorage.getItem("uni_gemini_key") || "");
@@ -179,6 +287,10 @@ export default function App() {
   
   const [customModels, setCustomModels] = useState<{id:string, name:string, provider:string}[]>(() => {
     try { return JSON.parse(localStorage.getItem("uni_custom_models") || "[]"); } catch { return[]; }
+  });
+
+  const [defaultModels, setDefaultModels] = useState<{id:string, name:string, provider:string}[]>(() => {
+    try { return JSON.parse(localStorage.getItem("uni_default_models") || "[]"); } catch { return []; }
   });
 
   const [showReasoning, setShowReasoning] = useState(localStorage.getItem("uni_show_reasoning") !== "false");
@@ -206,8 +318,14 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isInputExpanded, setIsInputExpanded] = useState(false);
 
-  const ALL_MODELS = [...MODELS, ...customModels];
+  const ALL_MODELS = defaultModels.length > 0
+    ? [...defaultModels, ...customModels]
+    : [...FALLBACK_MODELS, ...customModels];
   const [selectedModel, setSelectedModel] = useState(ALL_MODELS[0]);
+  // 当默认模型 / 自定义模型变化时，若当前选中模型不存在则回退到第一个
+  useEffect(() => {
+    if (!ALL_MODELS.find(m => m.id === selectedModel.id)) setSelectedModel(ALL_MODELS[0]);
+  }, [defaultModels, customModels]);
   const [inputText, setInputText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -219,12 +337,13 @@ export default function App() {
 
   const [newModelForm, setNewModelForm] = useState({ id: "", name: "", provider: "openai" });
 
-  const [adminTab, setAdminTab] = useState<'users' | 'admins' | 'logs' | 'requests'>('users');
+  const [adminTab, setAdminTab] = useState<'users' | 'admins' | 'logs' | 'requests' | 'models'>('users');
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
   const [poorAdmins, setPoorAdmins] = useState<any[]>([]);
   const [adminLogs, setAdminLogs] = useState<any[]>([]);
   const [resetRequests, setResetRequests] = useState<any[]>([]);
   const [newAdminForm, setNewAdminForm] = useState({ user: "", pass: "" });
+  const [adminModelForm, setAdminModelForm] = useState({ id: "", name: "", provider: "openai" });
 
   const [viewUserSessions, setViewUserSessions] = useState<any>(null);
   const [readSession, setReadSession] = useState<ChatSession | null>(null);
@@ -243,12 +362,25 @@ export default function App() {
   useEffect(() => {
     loadFromIDB(STORAGE_KEY).then(saved => {
       if (saved && saved.length > 0) {
-        setSessions(saved); setCurrentSessionId(saved[0].id);
+        // Load messages into cache, sessions as metadata
+        const msgs: Record<string, Message[]> = {};
+        const meta = saved.map((s: any) => {
+          if (s.messages && s.messages.length > 0) msgs[s.id] = s.messages;
+          return { id: s.id, title: s.title, createdAt: s.createdAt, messages: [] };
+        });
+        setSessionMessages(msgs);
+        setSessions(meta); setCurrentSessionId(meta[0].id);
       } else {
         const oldSaved = localStorage.getItem(STORAGE_KEY);
         if (oldSaved) {
           const parsed = JSON.parse(oldSaved);
-          setSessions(parsed); if (parsed.length > 0) setCurrentSessionId(parsed[0].id);
+          const msgs: Record<string, Message[]> = {};
+          const meta = parsed.map((s: any) => {
+            if (s.messages && s.messages.length > 0) msgs[s.id] = s.messages;
+            return { id: s.id, title: s.title, createdAt: s.createdAt, messages: [] };
+          });
+          setSessionMessages(msgs);
+          setSessions(meta); if (meta.length > 0) setCurrentSessionId(meta[0].id);
           saveToIDB(STORAGE_KEY, parsed);
         }
       }
@@ -269,14 +401,18 @@ export default function App() {
 
   useEffect(() => {
     if (!isDataLoaded) return;
-    const cleanSessions = sessions.map((s: ChatSession) => ({ ...s, messages: s.messages.map((m: Message) => ({ ...m, previewImages:[] })) }));
-    saveToIDB(STORAGE_KEY, cleanSessions).catch(e => console.error("IDB 写入失败:", e));
+    // Save sessions with messages from cache to IDB
+    const fullSessions = sessions.map((s: ChatSession) => ({
+      ...s, messages: (sessionMessages[s.id] || []).map((m: Message) => ({ ...m, previewImages:[] }))
+    }));
+    saveToIDB(STORAGE_KEY, fullSessions).catch(e => console.error("IDB 写入失败:", e));
 
     localStorage.setItem("uni_brain_memory", longTermMemory);
     localStorage.setItem("user_token", token);
     localStorage.setItem("saved_username", username);
     localStorage.setItem("is_admin", isAdmin ? "true" : "false");
     localStorage.setItem("admin_role", adminRole);
+    localStorage.setItem("uni_default_models", JSON.stringify(defaultModels));
 
     if (isAdmin) return;
     if (isInitialLoad.current) { isInitialLoad.current = false; return; }
@@ -285,14 +421,23 @@ export default function App() {
       if (!token) return;
       setIsSyncing(true);
       try {
-        await fetch(`${SERVER_URL}/api/sync`, {
+        // Sync metadata + cached messages to server
+        const sessionList = sessions.map(s => ({ id: s.id, title: s.title, createdAt: s.createdAt }));
+        // Build sessions with messages from cache ONLY (avoids sending unloaded session data)
+        const sessionsWithMessages = sessions.map(s => ({
+          id: s.id, title: s.title, createdAt: s.createdAt,
+          messages: sessionMessages[s.id] || []
+        }));
+        const res = await fetch(`${SERVER_URL}/api/sync`, {
           method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ sessions, longTermMemory, geminiKey, deepseekKey, doubaoKey, kimiKey, claudeKey, openaiKey, customModels })
+          body: JSON.stringify({ sessionList, sessions: sessionsWithMessages, longTermMemory, geminiKey, deepseekKey, doubaoKey, kimiKey, claudeKey, openaiKey, customModels })
         });
+        const data = await res.json();
+        if (data.defaultModels) setDefaultModels(data.defaultModels);
       } catch (e) { } finally { setIsSyncing(false); }
     }, 3000);
     return () => clearTimeout(timer);
-  }, [sessions, longTermMemory, token, username, geminiKey, deepseekKey, doubaoKey, kimiKey, claudeKey, openaiKey, customModels, isDataLoaded, isAdmin, adminRole]);
+  }, [sessions, longTermMemory, token, username, geminiKey, deepseekKey, doubaoKey, kimiKey, claudeKey, openaiKey, customModels, defaultModels, isDataLoaded, isAdmin, adminRole]);
 
   useEffect(() => {
     let interval: any;
@@ -350,10 +495,15 @@ AI回答：${aiText.slice(0, 300)}...
         setToken(data.token); setUsername(authForm.user); setIsAuthOpen(false); showToast("登录成功");
         if (data.role === 'super_admin' || data.role === 'poor_admin') {
           setIsAdmin(true); setAdminRole(data.role); fetchAdminUsers(data.token); fetchResetRequests(data.token);
+          if (data.defaultModels) setDefaultModels(data.defaultModels);
           if (data.role === 'super_admin') { fetchPoorAdmins(data.token); fetchAdminLogs(data.token); }
         } else {
           setIsAdmin(false); setAdminRole(""); isInitialLoad.current = true;
-          if (data.sessions && data.sessions.length > 0) setSessions(data.sessions);
+          // sessionList: only metadata, no messages
+          setSessionMessages({});
+          if (data.sessionList && data.sessionList.length > 0) {
+            setSessions(data.sessionList.map((s: any) => ({ id: s.id, title: s.title, createdAt: s.createdAt, messages: [] })));
+          }
           if (data.longTermMemory) setLongTermMemory(data.longTermMemory);
           if (data.geminiKey) setGeminiKey(data.geminiKey);
           if (data.deepseekKey) setDeepseekKey(data.deepseekKey);
@@ -362,9 +512,27 @@ AI回答：${aiText.slice(0, 300)}...
           if (data.claudeKey) setClaudeKey(data.claudeKey);
           if (data.openaiKey) setOpenaiKey(data.openaiKey);
           if (data.customModels) setCustomModels(data.customModels);
+          if (data.defaultModels) setDefaultModels(data.defaultModels);
         }
       } else { showToast("注册成功，请登录"); setAuthMode('login'); }
     } catch (e: any) { showToast(e.message, 'error'); }
+  };
+
+  const fetchSessionMessages = async (sessionId: string) => {
+    if (sessionMessages[sessionId] || loadingSessionId) return;
+    setLoadingSessionId(sessionId);
+    try {
+      const res = await fetch(`${SERVER_URL}/api/session/${sessionId}`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error("加载失败");
+      const data = await res.json();
+      setSessionMessages(prev => ({ ...prev, [sessionId]: data.messages || [] }));
+    } catch (e: any) {
+      showToast("加载会话失败: " + e.message, "error");
+    } finally {
+      setLoadingSessionId(null);
+    }
   };
 
   const handleForgotPassword = async () => {
@@ -391,13 +559,13 @@ AI回答：${aiText.slice(0, 300)}...
     setToken(""); setUsername(""); setIsAdmin(false); setAdminRole(""); setIsLogoutConfirmOpen(false);
     
     setGeminiKey(""); setDeepseekKey(""); setDoubaoKey(""); setKimiKey(""); setClaudeKey(""); setOpenaiKey("");
-    setCustomModels([]); setLongTermMemory("尚未记录。"); setAttachments([]); setInputText("");
+    setCustomModels([]); setDefaultModels([]); setLongTermMemory("尚未记录。"); setAttachments([]); setInputText("");
     
     const blankId = Date.now().toString();
     setSessions([{ id: blankId, title: "新对话", messages: [], createdAt: Date.now() }]);
     setCurrentSessionId(blankId);['user_token', 'saved_username', 'is_admin', 'admin_role', 
      'uni_gemini_key', 'uni_deepseek_key', 'uni_doubao_key', 'uni_kimi_key', 
-     'uni_claude_key', 'uni_openai_key', 'uni_custom_models', 'uni_show_reasoning',
+     'uni_claude_key', 'uni_openai_key', 'uni_custom_models', 'uni_default_models', 'uni_show_reasoning',
      'uni_auto_brain', 'uni_brain_memory', 'uni_deepseek_vision'].forEach(k => localStorage.removeItem(k));
     
     localStorage.removeItem(STORAGE_KEY);
@@ -480,6 +648,8 @@ AI回答：${aiText.slice(0, 300)}...
     setNewModelForm({ id: "", name: "", provider: "openai" });
   };
 
+  const getCurrentMessages = (): Message[] => sessionMessages[currentSessionId!] || [];
+
   const handleSend = async () => {
     const activeModel = ALL_MODELS.find(m => m.id === selectedModel.id) || ALL_MODELS[0];
     const provider = activeModel.provider;
@@ -497,7 +667,7 @@ AI回答：${aiText.slice(0, 300)}...
 
     const curAtts = [...attachments];
     const text = inputText.trim() || "分析内容。";
-    
+
     let finalUserText = text;
     const pdfAtts = curAtts.filter(a => a.type === 'pdf');
     if (pdfAtts.length > 0) {
@@ -505,38 +675,70 @@ AI回答：${aiText.slice(0, 300)}...
     }
 
     const userMsg: Message = { id: Date.now().toString(), role: "user", content: finalUserText, previewImages: curAtts.filter(a => a.type === 'image').map(a => a.displayUrl) };
-    const isFirstMessage = sessions.find(s => s.id === currentSessionId)?.messages.length === 0;
+    const isFirstMessage = getCurrentMessages().length === 0;
+    const assistantMsgId = (Date.now() + 1).toString();
 
-    setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, userMsg] } : s));
+    // 流式本地状态：累积文本 + 每 5s 刷新 UI
+    let fullText = ""; let fullReason = ""; let lastFlush = 0;
+    const flushMessage = () => {
+      lastFlush = Date.now();
+      setSessionMessages(prev => ({
+        ...prev, [currentSessionId!]: (prev[currentSessionId!] || []).map(m =>
+          m.id === assistantMsgId ? { ...m, content: fullText, reasoning: fullReason } : m)
+      }));
+    };
+
+    // 同时添加用户消息和空白助手消息
+    setSessionMessages(prev => ({
+      ...prev, [currentSessionId!]: [...(prev[currentSessionId!] || []), userMsg, { id: assistantMsgId, role: "assistant", content: "", reasoning: "", modelName: activeModel.name }]
+    }));
     setInputText(""); setAttachments([]); setIsLoading(true);
+
+    const onDone = () => {
+      flushMessage(); setIsLoading(false);
+      if (isFirstMessage) generateAutoTitle(currentSessionId, text, provider, activeModel.id, apiKey);
+      triggerBrainUpdate(text, fullText, provider, activeModel.id, apiKey);
+      scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
+    const onStreamError = (err: Error) => {
+      showToast("API 报错: " + err.message, "error");
+      setSessionMessages(prev => ({
+        ...prev, [currentSessionId!]: (prev[currentSessionId!] || []).map(m =>
+          m.id === assistantMsgId ? { ...m, content: fullText || `[错误] ${err.message}`, isError: !fullText } : m)
+      }));
+      setIsLoading(false);
+      scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
+    const onToken = (token: string, reasoning?: string) => {
+      fullText += token;
+      if (reasoning) fullReason += reasoning;
+      // 每 5s 刷新一次 React UI（首次 token 不单独刷新，下次 5s 到期一块刷新；流结束时 onDone 兜底）
+      if (Date.now() - lastFlush >= 5000) flushMessage();
+    };
 
     const sys = `你是 Uniflourish 的全能AI助理。对话背景：\n${longTermMemory}`;
     try {
-      let rText = ""; let rReason = "";
-
       if (provider === "google") {
-        const payload = [{ role: "user", parts: [{ text: sys }] }, ...sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })), { role: "user", parts: [{ text: finalUserText }, ...curAtts.filter(a => a.type === 'image').map(a => ({ inline_data: { mime_type: "image/jpeg", data: a.apiBase64 } }))] }];
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${activeModel.id}:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: payload }) });
-        const d = await res.json(); if (d.error) throw new Error(d.error.message); rText = d.candidates[0].content.parts[0].text;
+        const payload = [{ role: "user", parts: [{ text: sys }] }, ...getCurrentMessages().map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })), { role: "user", parts: [{ text: finalUserText }, ...curAtts.filter(a => a.type === 'image').map(a => ({ inline_data: { mime_type: "image/jpeg", data: a.apiBase64 } }))] }];
+        await streamGoogle(activeModel.id, apiKey, payload, onToken, onDone, onStreamError);
       } else if (provider === "claude") {
-        const messages: any[] = sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role, content: m.content }));
+        const messages: any[] = getCurrentMessages().map(m => ({ role: m.role, content: m.content }));
         const userContent: any[] =[];
         curAtts.filter(a => a.type === 'image').forEach(a => userContent.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: a.apiBase64 } }));
         userContent.push({ type: "text", text: finalUserText });
         messages.push({ role: "user", content: userContent });
-        const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerously-allow-browser": "true", "content-type": "application/json" }, body: JSON.stringify({ model: activeModel.id, messages: messages, system: sys, max_tokens: 4096 }) });
-        const d = await res.json(); if (d.error) throw new Error(d.error.message); rText = d.content[0].text;
+        await streamClaude(apiKey, { model: activeModel.id, messages, system: sys, max_tokens: 4096 }, onToken, onDone, onStreamError);
       } else {
         let url = "https://api.openai.com/v1/chat/completions";
         if (provider === 'deepseek') url = "https://api.deepseek.com/chat/completions";
         else if (provider === 'doubao') url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
         else if (provider === 'kimi') url = "https://api.moonshot.cn/v1/chat/completions";
 
-        const dsMsgs: any[] = [{ role: "system", content: sys }, ...sessions.find(s => s.id === currentSessionId)!.messages.map(m => ({ role: m.role, content: m.content }))];
-        
+        const dsMsgs: any[] = [{ role: "system", content: sys }, ...getCurrentMessages().map(m => ({ role: m.role, content: m.content }))];
+
         // 🚀 核心修复：解除 provider === 'openai' 限制！所有兼容大模型均可支持视觉数组格式发送
         const isVisionEnabled = provider !== 'deepseek' || (provider === 'deepseek' && deepseekVision);
-        
+
         if (curAtts.filter(a => a.type === 'image').length > 0) {
           if (isVisionEnabled) {
             dsMsgs.push({ role: "user", content: [{ type: "text", text: finalUserText }, ...curAtts.filter(a => a.type === 'image').map(a => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${a.apiBase64}` } }))] });
@@ -548,17 +750,9 @@ AI回答：${aiText.slice(0, 300)}...
           dsMsgs.push({ role: "user", content: finalUserText });
         }
 
-        const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` }, body: JSON.stringify({ model: activeModel.id, messages: dsMsgs }) });
-        const d = await res.json(); if (d.error) throw new Error(d.error.message);
-        rText = d.choices[0].message.content; rReason = d.choices[0].message.reasoning_content || "";
+        await streamOpenAICompatible(url, apiKey, { model: activeModel.id, messages: dsMsgs }, onToken, onDone, onStreamError);
       }
-
-      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, { id: Date.now().toString(), role: "assistant", content: rText, reasoning: rReason, modelName: activeModel.name }] } : s));
-      
-      if (isFirstMessage) generateAutoTitle(currentSessionId, text, provider, activeModel.id, apiKey);
-      triggerBrainUpdate(text, rText, provider, activeModel.id, apiKey);
-
-    } catch (err: any) { showToast("API 报错: " + err.message, "error"); } finally { setIsLoading(false); scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }
+    } catch (err: any) { showToast("API 报错: " + err.message, "error"); setIsLoading(false); }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -593,6 +787,7 @@ AI回答：${aiText.slice(0, 300)}...
   const createNewSession = () => {
     const id = Date.now().toString();
     setSessions(p => [{ id, title: "新对话", messages: [], createdAt: Date.now() }, ...p]);
+    setSessionMessages(prev => ({ ...prev, [id]: [] }));
     setCurrentSessionId(id); setAttachments([]); setInputText("");
     setIsSidebarOpen(false); // 移动端新建对话后自动收回侧边栏
   };
@@ -692,6 +887,7 @@ AI回答：${aiText.slice(0, 300)}...
             </button>
             {adminRole === 'super_admin' && <button onClick={() => setAdminTab('admins')} className={`pb-2 border-b-2 font-bold transition-all flex items-center gap-2 whitespace-nowrap ${adminTab === 'admins' ? 'border-amber-500 text-amber-400' : 'border-transparent text-slate-400 hover:text-slate-300'}`}><Shield size={16}/> 低级管理员池</button>}
             {adminRole === 'super_admin' && <button onClick={() => setAdminTab('logs')} className={`pb-2 border-b-2 font-bold transition-all flex items-center gap-2 whitespace-nowrap ${adminTab === 'logs' ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-slate-300'}`}><Activity size={16}/> 操作审计日志</button>}
+            <button onClick={() => setAdminTab('models')} className={`pb-2 border-b-2 font-bold transition-all flex items-center gap-2 whitespace-nowrap ${adminTab === 'models' ? 'border-emerald-500 text-emerald-400' : 'border-transparent text-slate-400 hover:text-slate-300'}`}><Settings size={16}/> 默认模型</button>
           </div>
 
           {adminTab === 'users' && (
@@ -805,6 +1001,69 @@ AI回答：${aiText.slice(0, 300)}...
             </div>
           )}
 
+          {adminTab === 'models' && (
+            <div className="animate-in fade-in duration-300 space-y-6">
+              <div className="bg-slate-800 rounded-2xl p-6 shadow-2xl border border-slate-700">
+                <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Settings size={20} className="text-emerald-400" /> 添加默认模型</h2>
+                <p className="text-xs text-slate-400 mb-4">添加后所有用户登录 / 同步时将自动获取。不会删除用户已自定义的模型。</p>
+                <div className="flex gap-2 flex-wrap">
+                  <input type="text" placeholder="模型 ID（如 deepseek-v4-pro）" className="bg-slate-900 text-sm border border-slate-700 px-4 py-2 rounded-lg outline-none focus:border-emerald-500 flex-1 min-w-[200px]" value={adminModelForm.id} onChange={e => setAdminModelForm({...adminModelForm, id: e.target.value, name: e.target.value})} />
+                  <select className="bg-slate-900 text-sm border border-slate-700 px-4 py-2 rounded-lg outline-none focus:border-emerald-500 font-bold text-slate-300" value={adminModelForm.provider} onChange={e => setAdminModelForm({...adminModelForm, provider: e.target.value})}>
+                    <option value="openai">ChatGPT</option>
+                    <option value="claude">Claude</option>
+                    <option value="google">Gemini</option>
+                    <option value="deepseek">DeepSeek</option>
+                    <option value="doubao">豆包</option>
+                    <option value="kimi">Kimi</option>
+                  </select>
+                  <button onClick={async () => {
+                    if (!adminModelForm.id) { showToast("模型 ID 不能为空", "error"); return; }
+                    try {
+                      const res = await fetch(`${SERVER_URL}/api/admin/default-models`, {
+                        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+                        body: JSON.stringify(adminModelForm)
+                      });
+                      const d = await res.json();
+                      if (!res.ok) throw new Error(d.error);
+                      setDefaultModels(prev => [...prev, { id: adminModelForm.id, name: adminModelForm.name || adminModelForm.id, provider: adminModelForm.provider }]);
+                      setAdminModelForm({ id: "", name: "", provider: "openai" });
+                      showToast("默认模型已添加");
+                    } catch (e: any) { showToast(e.message, "error"); }
+                  }} className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-bold text-sm transition-colors whitespace-nowrap"><Plus size={16} className="inline mr-1" />添加</button>
+                </div>
+              </div>
+              <div className="bg-slate-800 rounded-2xl p-6 shadow-2xl border border-slate-700">
+                <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><Database size={20} className="text-blue-400" /> 当前默认模型列表</h2>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead><tr className="bg-slate-900 text-slate-400 text-sm"><th className="p-4 rounded-tl-xl">模型 ID</th><th className="p-4">提供商</th><th className="p-4 rounded-tr-xl">操作</th></tr></thead>
+                    <tbody>
+                      {defaultModels.length === 0 && <tr><td colSpan={3} className="p-8 text-center text-slate-500">暂无默认模型</td></tr>}
+                      {defaultModels.map(m => (
+                        <tr key={m.id} className="border-b border-slate-700/50 hover:bg-slate-700/30 transition-colors">
+                          <td className="p-4 font-bold text-slate-200">{m.name} <span className="text-[10px] text-slate-500 ml-2">({m.id})</span></td>
+                          <td className="p-4"><span className="bg-slate-700 text-slate-300 px-3 py-1 rounded-full text-xs font-bold">{m.provider}</span></td>
+                          <td className="p-4">
+                            <button onClick={async () => {
+                              try {
+                                const res = await fetch(`${SERVER_URL}/api/admin/default-models/${encodeURIComponent(m.id)}`, {
+                                  method: "DELETE", headers: { "Authorization": `Bearer ${token}` }
+                                });
+                                if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
+                                setDefaultModels(prev => prev.filter(x => x.id !== m.id));
+                                showToast("已删除默认模型");
+                              } catch (e: any) { showToast(e.message, "error"); }
+                            }} className="bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all"><Trash2 size={12} /> 移除</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
           {viewUserSessions && !readSession && (
             <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-8 z-[70] backdrop-blur-sm animate-in zoom-in duration-200">
               <div className="bg-slate-900 rounded-2xl w-full max-w-4xl h-[80vh] flex flex-col border border-slate-700 shadow-2xl overflow-hidden">
@@ -868,20 +1127,20 @@ AI回答：${aiText.slice(0, 300)}...
         </div>
       ) : (
         <>
-            <aside className={`fixed md:relative inset-y-0 left-0 z-50 bg-slate-50 border-r border-gray-200 flex flex-col transform transition-all duration-300 ease-in-out ${isSidebarOpen ? "w-64 translate-x-0" : "w-0 -translate-x-full md:translate-x-0 md:w-0 overflow-hidden"}`}>
-            <div className="h-[71px] p-4 shrink-0 border-b border-gray-200 bg-slate-50 flex items-center justify-center">
+            <aside className={`fixed md:relative inset-y-0 left-0 z-50 bg-slate-50 border-r border-gray-200 flex flex-col transform transition-all duration-300 ease-in-out ${isSidebarOpen ? "w-64 translate-x-0" : "w-0 -translate-x-full md:translate-x-0 md:w-0 overflow-hidden"}`}>           
+            <div className="pt-[env(safe-area-inset-top,20px)] pb-4 px-4 shrink-0 border-b border-gray-200 bg-slate-50 flex items-center justify-center min-h-[85px]">
               <button onClick={createNewSession} className="w-full bg-black text-white py-2 rounded-xl font-bold text-sm shadow-md transition-all active:scale-95 flex items-center justify-center gap-2"><Plus size={16} /> 新建对话</button>
             </div>
             <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1 custom-scrollbar">
               {sessions.map((s: ChatSession) => (
-                <div key={s.id} onClick={() => { setCurrentSessionId(s.id); setIsSidebarOpen(false); }} className={`group flex items-center justify-between p-3 rounded-xl cursor-pointer ${currentSessionId === s.id ? 'bg-white shadow-sm ring-1 ring-black/5' : 'hover:bg-slate-200/50'}`}>
+                <div key={s.id} onClick={() => { setCurrentSessionId(s.id); setIsSidebarOpen(false); fetchSessionMessages(s.id); }} className={`group flex items-center justify-between p-3 rounded-xl cursor-pointer ${currentSessionId === s.id ? 'bg-white shadow-sm ring-1 ring-black/5' : 'hover:bg-slate-200/50'}`}>
                   <div className="flex items-center gap-3 overflow-hidden flex-1">
                     <MessageSquare size={16} className={currentSessionId === s.id ? 'text-black' : 'text-slate-400'} />
                     {editingSessionId === s.id ? (<input autoFocus className="bg-slate-100 text-sm w-full rounded outline-none" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} onBlur={() => { setSessions(p => p.map(ss => ss.id === s.id ? { ...ss, title: editTitle } : ss)); setEditingSessionId(null); }} onKeyDown={(e) => e.key === 'Enter' && (setSessions(p => p.map(ss => ss.id === s.id ? { ...ss, title: editTitle } : ss)), setEditingSessionId(null))} />) : (<span className={`text-sm truncate ${currentSessionId === s.id ? 'font-bold text-black' : 'text-slate-600'}`}>{s.title}</span>)}
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
                     <button onClick={(e) => { e.stopPropagation(); setEditingSessionId(s.id); setEditTitle(s.title); }} className="p-1 hover:text-blue-500"><Edit3 size={14} /></button>
-                    <button onClick={(e) => { e.stopPropagation(); setSessions(prev => prev.filter(ss => ss.id !== s.id)); }} className="p-1 hover:text-red-500"><Trash2 size={14} /></button>
+                    <button onClick={(e) => { e.stopPropagation(); setSessions(prev => prev.filter(ss => ss.id !== s.id)); setSessionMessages(prev => { const n = {...prev}; delete n[s.id]; return n; }); }} className="p-1 hover:text-red-500"><Trash2 size={14} /></button>
                   </div>
                 </div>
               ))}
@@ -907,7 +1166,7 @@ AI回答：${aiText.slice(0, 300)}...
           </aside>
           
           <main className="flex-1 flex flex-col h-full min-w-0 bg-white">
-            <header className="h-[71px] flex items-center justify-between px-4 border-b border-gray-200 bg-white/90 backdrop-blur-md sticky top-0 z-10 shrink-0">
+            <header className="pt-[env(safe-area-inset-top,20px)] pb-2 flex items-center justify-between px-4 border-b border-gray-200 bg-white/90 backdrop-blur-md sticky top-0 z-10 shrink-0 min-h-[85px]">
               {/* 👇 这里的按钮现在在电脑和手机上都会显示 */}
               <div className="flex items-center">
                 <button 
@@ -933,7 +1192,9 @@ AI回答：${aiText.slice(0, 300)}...
 
             <div className="flex-1 overflow-y-auto custom-scrollbar bg-white">
               <div className="max-w-4xl mx-auto p-4 md:p-12 space-y-12">
-                {(sessions.find(s => s.id === currentSessionId) || sessions[0])?.messages.map((msg: Message) => (
+                {loadingSessionId === currentSessionId ? (
+                  <div className="flex items-center justify-center py-16 text-slate-400"><Loader2 className="animate-spin mr-2" size={20} />加载历史记录中...</div>
+                ) : (getCurrentMessages().length > 0 ? getCurrentMessages() : []).map((msg: Message) => (
                   <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                     <div className={`w-full ${msg.role === "user" ? "max-w-[80%] ml-auto" : "max-w-none"}`}>
                       {msg.role === "user" ? (
