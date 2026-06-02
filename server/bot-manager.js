@@ -245,6 +245,17 @@ class BotInstance {
         log(this.name, `发现 ${newMessageIds.length} 条新消息，生成感悟`);
         const result = await generateReflection(this.name, this.doc, recentMessages);
         rawContent = result.content; usage = result.usage;
+      } else if (this.doc.pendingTrigger) {
+        log(this.name, '无新对话（手动触发），自由生成');
+        const result = await generateFreeContent(this.name, this.doc);
+        rawContent = result.content; usage = result.usage;
+      } else if (this.doc.skipWhenIdle) {
+        // 无新对话且开启了跳过开关 → 更新 lastPostTime 防止重复检查，然后跳过
+        log(this.name, '无新对话，skipWhenIdle 开启，跳过本次发帖');
+        const skipUpdate = { lastPostTime: Date.now(), lastError: '' };
+        await BotConfig.findByIdAndUpdate(this.doc._id, skipUpdate);
+        this.doc.lastPostTime = skipUpdate.lastPostTime;
+        return;
       } else {
         log(this.name, '无新对话，自由生成');
         const result = await generateFreeContent(this.name, this.doc);
