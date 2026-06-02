@@ -127,7 +127,7 @@ router.post('/send', requireUser, async (req, res) => {
 
     const transporter = isInternal
       ? nodemailer.createTransport({ host: '127.0.0.1', port: 587, auth: { user: user.allocatedEmail, pass: pwd } })
-      : nodemailer.createTransport({ host: 'smtp.resend.com', port: 587, auth: { user: 'resend', pass: 'REDACTED_RESEND_KEY' } });
+      : nodemailer.createTransport({ host: 'smtp.resend.com', port: 587, auth: { user: 'resend', pass: process.env.RESEND_API_KEY || '' } });
 
     await transporter.sendMail({
       from: user.allocatedEmail,

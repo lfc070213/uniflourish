@@ -1,5 +1,6 @@
 // 项目名: Uniflourish | 版本号: v2.1.0
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');

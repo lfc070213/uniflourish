@@ -8,8 +8,8 @@ const { execSync } = require('child_process');
 const nodemailer = require('nodemailer');
 
 const POSTE_URL = 'http://127.0.0.1';
-const ADMIN_EMAIL = 'auth@uniflourish.top';
-const ADMIN_PASS = 'REDACTED_POSTE_PASS';
+const ADMIN_EMAIL = process.env.POSTE_ADMIN_EMAIL || 'auth@uniflourish.top';
+const ADMIN_PASS = process.env.POSTE_ADMIN_PASS || '';
 const DOMAIN = 'uniflourish.top';
 
 let adminCookie = null;
@@ -120,7 +120,7 @@ const transporter = nodemailer.createTransport({
   host: 'smtp.resend.com',
   port: 587,
   secure: false,
-  auth: { user: 'resend', pass: 'REDACTED_RESEND_KEY' },
+  auth: { user: 'resend', pass: process.env.RESEND_API_KEY || '' },
   tls: { rejectUnauthorized: false }
 });
 
