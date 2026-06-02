@@ -1,6 +1,6 @@
 [package]
 name = "uniflourish"  # 这里必须改，不然编译出来的二进制文件名还是旧的
-version = "0.1.0"
+version = "2.1.0"
 authors = ["Li Fuchun"]
 edition = "2021"
 

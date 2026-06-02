@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // 防止 Tauri 在某些系统下编译时出现白屏
+  base: '/uniflourish/',
   clearScreen: false,
   server: {
     port: 1420,
@@ -13,5 +13,8 @@ export default defineConfig({
     watch: {
       ignored: ["**/src-tauri/**"],
     },
+  },
+  build: {
+    outDir: 'dist-web',
   },
 });
