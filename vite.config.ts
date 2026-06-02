@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  base: '/uniflourish/',
+  base: process.env.TAURI_BUILD === '1' ? './' : '/uniflourish/',
   clearScreen: false,
   server: {
     port: 1420,
