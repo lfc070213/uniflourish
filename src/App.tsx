@@ -20,7 +20,10 @@ const VERSION = "v2.1.0";
 
 const FALLBACK_MODELS = [
   { id: "gemini-3.1-flash-lite", name: "gemini-3.1-flash-lite", provider: "google" },
+  { id: "gemini-3-flash-preview", name: "gemini-3-flash-preview", provider: "google" },
+  { id: "gemini-3.1-pro-preview", name: "gemini-3.1-pro-preview", provider: "google" },
   { id: "deepseek-v4-flash", name: "deepseek-v4-flash", provider: "deepseek" },
+  { id: "deepseek-v4-pro", name: "deepseek-v4-pro", provider: "deepseek" },
 ];
 
 const STORAGE_KEY = "uniflourish_v2.1.0_stable";
@@ -499,16 +502,9 @@ AI回答：${aiText.slice(0, 300)}...
           if (data.role === 'super_admin') { fetchPoorAdmins(data.token); fetchAdminLogs(data.token); }
         } else {
           setIsAdmin(false); setAdminRole(""); isInitialLoad.current = true;
-          if (data.sessions && data.sessions.length > 0) {
-            const msgs: Record<string, Message[]> = {};
-            const meta = data.sessions.map((s: any) => {
-              if (s.messages && s.messages.length > 0) msgs[s.id] = s.messages;
-              return { id: s.id, title: s.title, createdAt: s.createdAt, messages: [] };
-            });
-            setSessionMessages(msgs);
-            setSessions(meta);
-          } else {
-            setSessionMessages({});
+          setSessionMessages({});
+          if (data.sessionList && data.sessionList.length > 0) {
+            setSessions(data.sessionList.map((s: any) => ({ id: s.id, title: s.title, createdAt: s.createdAt, messages: [] })));
           }
           if (data.longTermMemory) setLongTermMemory(data.longTermMemory);
           if (data.geminiKey) setGeminiKey(data.geminiKey);

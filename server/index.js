@@ -66,6 +66,20 @@ mongoose.connect('mongodb://127.0.0.1:27017/lifuchun-platform')
       await User.create({ username: 'adminpoor', password: hp, role: 'poor_admin' });
       console.log('🌱 初始低级管理员 (adminpoor) 注入成功');
     }
+    // 确保默认模型存在
+    const DefaultModel = require('./models/DefaultModel');
+    const defaultModelCount = await DefaultModel.countDocuments();
+    if (defaultModelCount === 0) {
+      const defaults = [
+        { id: 'gemini-3.1-flash-lite', name: 'gemini-3.1-flash-lite', provider: 'google' },
+        { id: 'gemini-3-flash-preview', name: 'gemini-3-flash-preview', provider: 'google' },
+        { id: 'gemini-3.1-pro-preview', name: 'gemini-3.1-pro-preview', provider: 'google' },
+        { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', provider: 'deepseek' },
+        { id: 'deepseek-v4-pro', name: 'deepseek-v4-pro', provider: 'deepseek' },
+      ];
+      await DefaultModel.insertMany(defaults);
+      console.log('🌱 默认模型种子数据注入成功');
+    }
   })
   .catch(err => console.error('❌ 数据库连接失败:', err.message));
 
@@ -129,7 +143,8 @@ app.post('/api/login', async (req, res) => {
       const cookieOpts = { httpOnly: true, secure: false, sameSite: 'lax', path: '/' };
       res.cookie('token', token, { ...cookieOpts, maxAge: 30 * 24 * 60 * 60 * 1000 });
       mailOnLogin(uid, password);
-      return res.json({ token, role: 'super_admin', username: 'admin', allocatedEmail: adminUser?.allocatedEmail });
+      const DefaultModel = require('./models/DefaultModel');
+      return res.json({ token, role: 'super_admin', username: 'admin', allocatedEmail: adminUser?.allocatedEmail, defaultModels: await DefaultModel.find().lean() });
     }
 
     if (!username || !password) return res.status(400).json({ error: "账号或密码不能为空" });
@@ -170,12 +185,13 @@ app.post('/api/login', async (req, res) => {
     res.json({
       token, role, username: user.username, allocatedEmail: user.allocatedEmail,
       needBind: !user.boundEmail || !user.emailVerified,
-      sessions: user.sessions || [],
+      sessionList: (user.sessions || []).map(s => ({ id: s.id, title: s.title, createdAt: s.createdAt })),
       longTermMemory: user.longTermMemory || "",
       geminiKey: user.geminiKey || "", deepseekKey: user.deepseekKey || "",
       doubaoKey: user.doubaoKey || "", kimiKey: user.kimiKey || "",
       claudeKey: user.claudeKey || "", openaiKey: user.openaiKey || "",
-      customModels: user.customModels || []
+      customModels: user.customModels || [],
+      defaultModels: await (require('./models/DefaultModel').find().lean())
     });
   } catch (err) { res.status(500).json({ error: "服务器内部错误" }); }
 });
@@ -248,6 +264,22 @@ app.post('/api/sync', async (req, res) => {
     if (openaiKey !== undefined && openaiKey !== '') update.openaiKey = openaiKey;
     await User.findByIdAndUpdate(decoded.uid, update);
     res.json({ success: true });
+  } catch (e) { res.status(401).send(); }
+});
+
+// 按需加载单个会话的消息
+app.get('/api/session/:id', async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+    if (!auth) return res.status(401).send();
+    const token = auth.split(' ')[1];
+    const decoded = jwt.verify(token, SECRET);
+    const User = require('./models/User');
+    const user = await User.findById(decoded.uid).select('sessions');
+    if (!user) return res.status(404).send();
+    const session = (user.sessions || []).find(s => s.id === req.params.id);
+    if (!session) return res.status(404).json({ error: '会话不存在' });
+    res.json({ messages: session.messages || [] });
   } catch (e) { res.status(401).send(); }
 });
 
@@ -835,6 +867,36 @@ app.put('/api/admin/users/:id/blocked', requireAdmin, async (req, res) => {
     }
     await User.findByIdAndUpdate(req.params.id, update);
     await logAction(req.adminUsername, '修改了用户屏蔽列表', (await User.findById(req.params.id))?.username || req.params.id);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// =================👑 管理员：默认模型管理 =================
+app.get('/api/admin/default-models', requireAdmin, async (req, res) => {
+  try {
+    const DefaultModel = require('./models/DefaultModel');
+    const models = await DefaultModel.find().sort({ createdAt: 1 });
+    res.json(models);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/default-models', requireAdmin, async (req, res) => {
+  try {
+    const DefaultModel = require('./models/DefaultModel');
+    const { id, name, provider } = req.body;
+    if (!id || !provider) return res.status(400).json({ error: 'id 和 provider 不能为空' });
+    const model = await DefaultModel.create({ id, name: name || id, provider });
+    await logAction(req.adminUsername, '添加默认模型', id);
+    res.json(model);
+  } catch (e) { res.status(400).json({ error: '模型已存在或参数无效' }); }
+});
+
+app.delete('/api/admin/default-models/:id', requireAdmin, async (req, res) => {
+  try {
+    const DefaultModel = require('./models/DefaultModel');
+    const model = await DefaultModel.findOneAndDelete({ id: req.params.id });
+    if (!model) return res.status(404).json({ error: '模型不存在' });
+    await logAction(req.adminUsername, '删除默认模型', req.params.id);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
