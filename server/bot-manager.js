@@ -457,9 +457,18 @@ class BotManager {
           this.instances.delete(name);
         }
       }
-      // 启动/更新
+      // 仅启动新的或更新变更的
       for (const config of configs) {
-        this.startInstance(config);
+        const existing = this.instances.get(config.botUsername);
+        if (!existing) {
+          this.startInstance(config);
+        } else if (existing.doc.updatedAt && config.updatedAt &&
+                   new Date(config.updatedAt).getTime() > new Date(existing.doc.updatedAt).getTime()) {
+          // 配置有更新，重载
+          log('Manager', `${config.botUsername} 配置已更新，重载`);
+          existing.reload(config);
+        }
+        // 否则跳过，避免无意义重启
       }
     } catch (e) {
       console.error(`[Manager] 重载失败: ${e.message}`);
