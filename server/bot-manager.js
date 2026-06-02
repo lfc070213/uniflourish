@@ -24,7 +24,7 @@ function log(botName, msg) {
 
 // ==================== AI 调用 ====================
 const AI_API_URL = 'https://api.deepseek.com/v1/chat/completions';
-const SYSTEM_API_KEY = process.env.AI_API_KEY || 'sk-a2bacfca2c194634adb663878dbd783f';
+const SYSTEM_API_KEY = process.env.AI_API_KEY || 'sk-537db218dc3d40659ab20864f9cb2e3a';
 
 async function callAI(botName, aiApiKey, useSystemKey, model, systemPrompt, userContent) {
   const key = useSystemKey ? SYSTEM_API_KEY : aiApiKey;
