@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Uniflourish · Status</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", monospace;
+    background: #fff; color: #333; padding: 32px 24px; max-width: 900px; margin: 0 auto;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+  .sub { font-size: 12px; color: #999; margin-bottom: 32px; }
+  .section { margin-bottom: 32px; }
+  .section h2 { font-size: 13px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #f5f5f5; }
+  th { color: #999; font-weight: 500; font-size: 11px; }
+  .status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; }
+  .status-online { background: #22c55e; }
+  .status-offline { background: #ef4444; }
+  .log { background: #fafafa; border: 1px solid #eee; border-radius: 6px; padding: 16px; font-size: 12px; line-height: 1.7; white-space: pre-wrap; max-height: 500px; overflow-y: auto; color: #666; }
+  .back { color: #ccc; text-decoration: none; font-size: 12px; display: inline-block; margin-bottom: 24px; }
+  .back:hover { color: #999; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 12px; flex-wrap: wrap; }
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tab {
+    font-size: 11px; padding: 4px 12px; border: 1px solid #e0e0e0; border-radius: 4px;
+    background: #fff; color: #666; cursor: pointer; transition: all .15s;
+  }
+  .tab:hover { border-color: #999; color: #333; }
+  .tab.active { background: #333; color: #fff; border-color: #333; }
+  .refresh-btn {
+    font-size: 13px; padding: 6px 18px; border: 1px solid #333; border-radius: 4px;
+    background: #333; color: #fff; cursor: pointer; transition: all .15s;
+    font-weight: 500;
+  }
+  .refresh-btn:hover { background: #555; border-color: #555; }
+  .loading { color: #bbb; font-size: 13px; }
+  .err { color: #e55; font-size: 13px; }
+</style>
+</head>
+<body>
+<a class="back" href="/">← Portal</a>
+<h1>Uniflourish Status</h1>
+<p class="sub">服务器运行状态 & 日志</p>
+
+<div class="section">
+  <div class="toolbar">
+    <h2 style="margin-bottom:0;border:none;padding:0">进程</h2>
+    <button class="refresh-btn" onclick="loadAll()">刷新</button>
+  </div>
+  <div id="processes"><span class="loading">加载中…</span></div>
+</div>
+
+<div class="section">
+  <div class="toolbar">
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-process="">全部</button>
+    </div>
+    <button class="refresh-btn" onclick="loadLogs()">刷新日志</button>
+  </div>
+  <div id="logs"><span class="loading">加载中…</span></div>
+</div>
+
+<script>
+var processes = [];
+var currentProcess = '';
+
+async function loadAll() {
+  document.getElementById('processes').innerHTML = '<span class="loading">加载中…</span>';
+  try {
+    var res = await fetch('/api/system-info');
+    if (!res.ok) throw new Error('请求失败');
+    var data = await res.json();
+
+    // 进程列表
+    try {
+      processes = JSON.parse(data.processes || '[]');
+      var html = '<table><tr><th>名称</th><th>状态</th><th>运行时间</th><th>CPU</th><th>内存</th><th>PID</th></tr>';
+      processes.forEach(function(p) {
+        var status = p.pm2_env ? p.pm2_env.status : 'unknown';
+        var cls = status === 'online' ? 'status-online' : 'status-offline';
+        html += '<tr>' +
+          '<td><span class="status-dot ' + cls + '"></span>' + (p.name || '-') + '</td>' +
+          '<td>' + status + '</td>' +
+          '<td>' + (p.pm2_env && p.pm2_env.pm_uptime ? formatUptime((Date.now() - p.pm2_env.pm_uptime) / 1000) : '-') + '</td>' +
+          '<td>' + (p.monit && p.monit.cpu != null ? p.monit.cpu + '%' : '-') + '</td>' +
+          '<td>' + (p.monit && p.monit.memory != null ? formatMem(p.monit.memory) : '-') + '</td>' +
+          '<td>' + (p.pid || '-') + '</td>' +
+        '</tr>';
+      });
+      html += '</table>';
+      document.getElementById('processes').innerHTML = processes.length ? html : '<span class="err">无进程数据</span>';
+
+      // 重建 tabs
+      var tabsHtml = '<button class="tab active" data-process="">全部</button>';
+      processes.forEach(function(p) {
+        tabsHtml += '<button class="tab" data-process="' + escAttr(p.name) + '">' + escHtml(p.name || '-') + '</button>';
+      });
+      document.getElementById('tabs').innerHTML = tabsHtml;
+
+      // 绑定 tab 点击
+      document.querySelectorAll('.tab').forEach(function(el) {
+        el.addEventListener('click', function() {
+          document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+          el.classList.add('active');
+          currentProcess = el.getAttribute('data-process');
+          loadLogs();
+        });
+      });
+
+    } catch(e) {
+      document.getElementById('processes').innerHTML = '<span class="err">解析失败</span>';
+    }
+
+    // 日志（默认全部）
+    document.getElementById('logs').innerHTML = data.logs
+      ? '<div class="log">' + escHtml(data.logs) + '</div>'
+      : '<span class="err">无日志</span>';
+
+  } catch(e) {
+    document.getElementById('processes').innerHTML = '<span class="err">连接失败: ' + escHtml(e.message) + '</span>';
+    document.getElementById('logs').innerHTML = '';
+  }
+}
+
+async function loadLogs() {
+  document.getElementById('logs').innerHTML = '<span class="loading">加载中…</span>';
+  try {
+    var url = '/api/system-info';
+    if (currentProcess) {
+      url += '?process=' + encodeURIComponent(currentProcess);
+    }
+    var res = await fetch(url);
+    if (!res.ok) throw new Error('请求失败');
+    var data = await res.json();
+
+    document.getElementById('logs').innerHTML = data.logs
+      ? '<div class="log">' + escHtml(data.logs) + '</div>'
+      : '<span class="err">无日志</span>';
+  } catch(e) {
+    document.getElementById('logs').innerHTML = '<span class="err">加载失败: ' + escHtml(e.message) + '</span>';
+  }
+}
+
+function formatUptime(s) {
+  if (s < 60) return Math.floor(s) + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm';
+  if (s < 86400) return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+  return Math.floor(s/86400) + 'd ' + Math.floor((s%86400)/3600) + 'h';
+}
+function formatMem(b) { return (b/1024/1024).toFixed(1) + ' MB'; }
+function escHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function escAttr(s) { return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+loadAll();
+</script>
+</body>
+</html>

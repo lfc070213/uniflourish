@@ -499,10 +499,16 @@ AI回答：${aiText.slice(0, 300)}...
           if (data.role === 'super_admin') { fetchPoorAdmins(data.token); fetchAdminLogs(data.token); }
         } else {
           setIsAdmin(false); setAdminRole(""); isInitialLoad.current = true;
-          // sessionList: only metadata, no messages
-          setSessionMessages({});
-          if (data.sessionList && data.sessionList.length > 0) {
-            setSessions(data.sessionList.map((s: any) => ({ id: s.id, title: s.title, createdAt: s.createdAt, messages: [] })));
+          if (data.sessions && data.sessions.length > 0) {
+            const msgs: Record<string, Message[]> = {};
+            const meta = data.sessions.map((s: any) => {
+              if (s.messages && s.messages.length > 0) msgs[s.id] = s.messages;
+              return { id: s.id, title: s.title, createdAt: s.createdAt, messages: [] };
+            });
+            setSessionMessages(msgs);
+            setSessions(meta);
+          } else {
+            setSessionMessages({});
           }
           if (data.longTermMemory) setLongTermMemory(data.longTermMemory);
           if (data.geminiKey) setGeminiKey(data.geminiKey);
