@@ -255,6 +255,7 @@ app.post('/api/sync', async (req, res) => {
     const User = require('./models/User');
 
     const { sessions, longTermMemory, geminiKey, deepseekKey, doubaoKey, kimiKey, claudeKey, openaiKey, customModels } = req.body;
+    console.log('[sync]', decoded.username, 'sessions:', sessions?.length, 'geminiKey:', geminiKey ? 'yes' : 'no', 'deepseekKey:', deepseekKey ? 'yes' : 'no');
     const update = { sessions, longTermMemory, customModels };
     if (geminiKey !== undefined && geminiKey !== '') update.geminiKey = geminiKey;
     if (deepseekKey !== undefined && deepseekKey !== '') update.deepseekKey = deepseekKey;
@@ -278,6 +279,7 @@ app.get('/api/session/:id', async (req, res) => {
     const user = await User.findById(decoded.uid).select('sessions');
     if (!user) return res.status(404).send();
     const session = (user.sessions || []).find(s => s.id === req.params.id);
+    console.log('[session]', decoded.username, 'req:', req.params.id, 'found:', !!session);
     if (!session) return res.status(404).json({ error: '会话不存在' });
     res.json({ messages: session.messages || [] });
   } catch (e) { res.status(401).send(); }

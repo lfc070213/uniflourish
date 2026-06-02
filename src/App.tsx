@@ -527,9 +527,15 @@ AI回答：${aiText.slice(0, 300)}...
       const res = await fetch(`${SERVER_URL}/api/session/${sessionId}`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
-      if (!res.ok) throw new Error("加载失败");
-      const data = await res.json();
-      setSessionMessages(prev => ({ ...prev, [sessionId]: data.messages || [] }));
+      if (res.status === 404) {
+        // 会话尚未同步到服务器，使用本地空消息
+        setSessionMessages(prev => ({ ...prev, [sessionId]: [] }));
+      } else if (!res.ok) {
+        throw new Error("加载失败");
+      } else {
+        const data = await res.json();
+        setSessionMessages(prev => ({ ...prev, [sessionId]: data.messages || [] }));
+      }
     } catch (e: any) {
       showToast("加载会话失败: " + e.message, "error");
     } finally {
