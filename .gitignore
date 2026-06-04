@@ -26,3 +26,11 @@ dist-ssr
 # 密钥文件
 *.keystore
 .claude/
+*.dmg
+
+# 非 AI 助手源码（本地保留，不上传 GitHub）
+server/
+server-routes.js
+recover-sessions.js
+status.html
+deploy.sh
