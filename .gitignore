@@ -25,3 +25,4 @@ dist-ssr
 *.env
 # 密钥文件
 *.keystore
+.claude/
