@@ -28,7 +28,7 @@ const FALLBACK_MODELS = [
 
 const STORAGE_KEY = "uniflourish_v2.1.0_stable";
 // 在 App.tsx 中修改
-const SERVER_URL = "https://yc.tailb5e8d2.ts.net";
+const SERVER_URL = "";
 
 const standardizeContent = (text: string) => {
   if (!text) return "";
