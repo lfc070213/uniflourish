@@ -1,4 +1,4 @@
-// 项目名: Uniflourish | 版本号: v2.1.1
+// 项目名: Uniflourish | 版本号: v2.1.2
 import "./App.css";
 import "katex/dist/katex.min.css";
 import { useState, useRef, useEffect } from "react";
@@ -16,7 +16,7 @@ import rehypeKatex from "rehype-katex";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js`;
 
-const VERSION = "v2.1.1";
+const VERSION = "v2.1.2";
 
 const FALLBACK_MODELS = [
   { id: "gemini-3.1-flash-lite", name: "gemini-3.1-flash-lite", provider: "google" },
@@ -26,7 +26,7 @@ const FALLBACK_MODELS = [
   { id: "deepseek-v4-pro", name: "deepseek-v4-pro", provider: "deepseek" },
 ];
 
-const STORAGE_KEY = "uniflourish_v2.1.1_stable";
+const STORAGE_KEY = "uniflourish_v2.1.2_stable";
 // 在 App.tsx 中修改
 // 浏览器用相对路径（兼容双域名），Tauri 桌面版需绝对 URL
 const SERVER_URL = typeof window !== "undefined" && window.location.protocol.startsWith("http") ? "" : "https://uniflourish.top";
@@ -317,6 +317,7 @@ export default function App() {
 
   const [isSyncing, setIsSyncing] = useState(false);
   const isInitialLoad = useRef(true);
+  const deletedSessionIds = useRef<Set<string>>(new Set());
 
   // 💡 状态管理：移动端侧边栏与沉浸式文本框
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -364,7 +365,7 @@ export default function App() {
   const adminScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    loadFromIDB(STORAGE_KEY).then(saved => {
+    loadFromIDB(STORAGE_KEY).then(async saved => {
       if (saved && saved.length > 0) {
         // Load messages into cache, sessions as metadata
         const msgs: Record<string, Message[]> = {};
@@ -386,6 +387,24 @@ export default function App() {
           setSessionMessages(msgs);
           setSessions(meta); if (meta.length > 0) setCurrentSessionId(meta[0].id);
           saveToIDB(STORAGE_KEY, parsed);
+        } else {
+          // 本地无数据但有 token → 从服务器拉取会话列表
+          const savedToken = localStorage.getItem("user_token");
+          if (savedToken && !localStorage.getItem("is_admin")?.includes("true")) {
+            try {
+              const res = await fetch(`${SERVER_URL}/api/me`, {
+                headers: { "Authorization": `Bearer ${savedToken}` }
+              });
+              if (res.ok) {
+                const data = await res.json();
+                if (data.sessionList && data.sessionList.length > 0) {
+                  setSessions(data.sessionList.map((s: any) => ({ id: s.id, title: s.title, createdAt: s.createdAt, messages: [] })));
+                  setCurrentSessionId(data.sessionList[0].id);
+                }
+                if (data.longTermMemory) setLongTermMemory(data.longTermMemory);
+              }
+            } catch (e) { console.warn("服务器会话加载失败:", e); }
+          }
         }
       }
       setIsDataLoaded(true);
@@ -434,10 +453,14 @@ export default function App() {
             id: s.id, title: s.title, createdAt: s.createdAt,
             messages: sessionMessages[s.id]
           }));
+        // 收集已删除的会话 ID
+        const deleted = Array.from(deletedSessionIds.current);
         const res = await fetch(`${SERVER_URL}/api/sync`, {
           method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ sessionList, sessions: sessionsWithMessages, longTermMemory, geminiKey, deepseekKey, doubaoKey, kimiKey, claudeKey, openaiKey, customModels })
+          body: JSON.stringify({ sessionList, sessions: sessionsWithMessages, deletedSessionIds: deleted, longTermMemory, geminiKey, deepseekKey, doubaoKey, kimiKey, claudeKey, openaiKey, customModels })
         });
+        // 同步成功后清除已删除记录
+        if (deleted.length > 0) deletedSessionIds.current.clear();
         const data = await res.json();
         if (data.defaultModels) setDefaultModels(data.defaultModels);
       } catch (e) { showToast("同步失败，请检查网络连接", "error"); console.error("Uniflourish 同步失败:", e); } finally { setIsSyncing(false); }
@@ -1151,7 +1174,7 @@ AI回答：${aiText.slice(0, 300)}...
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
                     <button onClick={(e) => { e.stopPropagation(); setEditingSessionId(s.id); setEditTitle(s.title); }} className="p-1 hover:text-blue-500"><Edit3 size={14} /></button>
-                    <button onClick={(e) => { e.stopPropagation(); setSessions(prev => prev.filter(ss => ss.id !== s.id)); setSessionMessages(prev => { const n = {...prev}; delete n[s.id]; return n; }); }} className="p-1 hover:text-red-500"><Trash2 size={14} /></button>
+                    <button onClick={async (e) => { e.stopPropagation(); setSessions(prev => prev.filter(ss => ss.id !== s.id)); setSessionMessages(prev => { const n = {...prev}; delete n[s.id]; return n; }); deletedSessionIds.current.add(s.id); if (token) { try { await fetch(`${SERVER_URL}/api/session/${s.id}`, { method: "DELETE", headers: { "Authorization": `Bearer ${token}` } }); } catch {} } }} className="p-1 hover:text-red-500"><Trash2 size={14} /></button>
                   </div>
                 </div>
               ))}
