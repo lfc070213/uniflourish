@@ -1,4 +1,4 @@
-// 项目名: Uniflourish | 版本号: v2.1.0
+// 项目名: Uniflourish | 版本号: v2.1.1
 import "./App.css";
 import "katex/dist/katex.min.css";
 import { useState, useRef, useEffect } from "react";
@@ -16,7 +16,7 @@ import rehypeKatex from "rehype-katex";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js`;
 
-const VERSION = "v2.1.0";
+const VERSION = "v2.1.1";
 
 const FALLBACK_MODELS = [
   { id: "gemini-3.1-flash-lite", name: "gemini-3.1-flash-lite", provider: "google" },
@@ -26,7 +26,7 @@ const FALLBACK_MODELS = [
   { id: "deepseek-v4-pro", name: "deepseek-v4-pro", provider: "deepseek" },
 ];
 
-const STORAGE_KEY = "uniflourish_v2.1.0_stable";
+const STORAGE_KEY = "uniflourish_v2.1.1_stable";
 // 在 App.tsx 中修改
 // 浏览器用相对路径（兼容双域名），Tauri 桌面版需绝对 URL
 const SERVER_URL = typeof window !== "undefined" && window.location.protocol.startsWith("http") ? "" : "https://uniflourish.top";
@@ -425,20 +425,22 @@ export default function App() {
       if (!token) return;
       setIsSyncing(true);
       try {
-        // Sync metadata + cached messages to server
+        // sessionList: 始终发送完整目录（保持会话列表同步）
         const sessionList = sessions.map(s => ({ id: s.id, title: s.title, createdAt: s.createdAt }));
-        // Build sessions with messages from cache ONLY (avoids sending unloaded session data)
-        const sessionsWithMessages = sessions.map(s => ({
-          id: s.id, title: s.title, createdAt: s.createdAt,
-          messages: sessionMessages[s.id] || []
-        }));
+        // sessions: 仅发送已加载且有消息的会话（防止空覆盖服务端数据）
+        const sessionsWithMessages = sessions
+          .filter(s => sessionMessages[s.id] && sessionMessages[s.id].length > 0)
+          .map(s => ({
+            id: s.id, title: s.title, createdAt: s.createdAt,
+            messages: sessionMessages[s.id]
+          }));
         const res = await fetch(`${SERVER_URL}/api/sync`, {
           method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
           body: JSON.stringify({ sessionList, sessions: sessionsWithMessages, longTermMemory, geminiKey, deepseekKey, doubaoKey, kimiKey, claudeKey, openaiKey, customModels })
         });
         const data = await res.json();
         if (data.defaultModels) setDefaultModels(data.defaultModels);
-      } catch (e) { console.error("Uniflourish 同步失败:", e); } finally { setIsSyncing(false); }
+      } catch (e) { showToast("同步失败，请检查网络连接", "error"); console.error("Uniflourish 同步失败:", e); } finally { setIsSyncing(false); }
     }, 3000);
     return () => clearTimeout(timer);
   }, [sessions, sessionMessages, longTermMemory, token, username, geminiKey, deepseekKey, doubaoKey, kimiKey, claudeKey, openaiKey, customModels, defaultModels, isDataLoaded, isAdmin, adminRole]);
@@ -529,8 +531,8 @@ AI回答：${aiText.slice(0, 300)}...
         headers: { "Authorization": `Bearer ${token}` }
       });
       if (res.status === 404) {
-        // 会话尚未同步到服务器，使用本地空消息
-        setSessionMessages(prev => ({ ...prev, [sessionId]: [] }));
+        // 会话尚未同步到服务器，不缓存（允许后续重试加载）
+        showToast("会话数据暂未同步，请稍后再试", "error");
       } else if (!res.ok) {
         throw new Error("加载失败");
       } else {
