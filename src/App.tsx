@@ -191,6 +191,7 @@ const streamOpenAICompatible = async (
           const json = JSON.parse(ds);
           const delta = json.choices?.[0]?.delta;
           if (delta?.content) onToken(delta.content, delta.reasoning_content);
+          else if (delta?.reasoning_content) onToken("", delta.reasoning_content);
         } catch {}
       }
     }
@@ -318,6 +319,7 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const isInitialLoad = useRef(true);
   const deletedSessionIds = useRef<Set<string>>(new Set());
+  const isLoadingRef = useRef(false);
 
   // 💡 状态管理：移动端侧边栏与沉浸式文本框
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -334,6 +336,7 @@ export default function App() {
   const [inputText, setInputText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
   const [thinkSeconds, setThinkSeconds] = useState(0);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isBrainOpen, setIsBrainOpen] = useState(false);
@@ -447,8 +450,15 @@ export default function App() {
         // sessionList: 始终发送完整目录（保持会话列表同步）
         const sessionList = sessions.map(s => ({ id: s.id, title: s.title, createdAt: s.createdAt }));
         // sessions: 仅发送已加载且有消息的会话（防止空覆盖服务端数据）
+        // 同时跳过正在流式输出中的会话（最后一条 AI 消息尚未有内容）
         const sessionsWithMessages = sessions
-          .filter(s => sessionMessages[s.id] && sessionMessages[s.id].length > 0)
+          .filter(s => {
+            const msgs = sessionMessages[s.id];
+            if (!msgs || msgs.length === 0) return false;
+            // 跳过当前正在加载的会话（流式输出未完成）
+            if (s.id === currentSessionId && isLoadingRef.current) return false;
+            return true;
+          })
           .map(s => ({
             id: s.id, title: s.title, createdAt: s.createdAt,
             messages: sessionMessages[s.id]
